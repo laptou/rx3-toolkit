@@ -129,6 +129,8 @@ core_after_launch()
     # another module can still restart rbp after core_prepare saw it resident.
     if [ "$CORE_RESIDENT" = "1" ] && [ "$NEED_RBP_RESTART" = "0" ]; then
         say "OK: performance core still active from the previous insertion"
+        say "--- core log since rbp started ---"
+        cat "$CORE_LOG" >> "$LOG" 2>/dev/null
         return 0
     fi
     if [ -s "$CORE_READY" ] &&
