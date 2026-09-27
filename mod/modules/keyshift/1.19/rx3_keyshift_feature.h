@@ -17,7 +17,6 @@ static int keyshift_feature_install(void)
         (void *)hooked_audio_start);
     if (!original_audio_start)
         return 0;
-    rx3_keyshift_install();
     rx3_keyshift_install_key_display();
     return rx3_keyshift_ready();
 }

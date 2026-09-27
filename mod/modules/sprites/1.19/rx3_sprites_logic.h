@@ -9,8 +9,6 @@
 #ifndef RX3_HOOK_TYPES
 #include <stddef.h>
 #include <stdint.h>
-#else
-typedef int int32_t;
 #endif
 
 #define RX3_SPRITE_NAME_LIMIT 44u

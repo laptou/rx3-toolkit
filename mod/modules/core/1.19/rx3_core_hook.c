@@ -116,6 +116,7 @@ typedef unsigned char  uint8_t;
 typedef unsigned short uint16_t;
 typedef short          int16_t;
 typedef unsigned int   uint32_t;
+typedef int            int32_t;
 typedef unsigned long long uint64_t;
 typedef unsigned long pthread_t;
 
@@ -397,6 +398,7 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         .audio_started = rx3_keyshift_start_audio,
         .report = rx3_keyshift_report,
         .destroy_deck = rx3_keyshift_destroy_deck,
+        .stretch_block = rx3_keyshift_stretch_block,
     },
     {
         .name = "stems",
@@ -467,8 +469,6 @@ static struct installed_hook touch_xpad_on_hook;
 static struct installed_hook touch_xpad_off_hook;
 static struct installed_hook touch_xpad_hold_hook;
 static struct installed_hook audio_start_hook;
-static struct installed_hook timestretch_operate_hook;
-static struct installed_hook timestretch_fgpr_hook;
 static struct installed_hook set_beatfx_hook;
 static draw_text_fn original_draw_text;
 static draw_image_fn original_draw_image;
@@ -483,8 +483,6 @@ static touch_area_fn original_touch_xpad_on;
 static touch_area_fn original_touch_xpad_off;
 static touch_area_hold_fn original_touch_xpad_hold;
 static audio_start_fn original_audio_start;
-static timestretch_operate_fn original_timestretch_operate;
-static timestretch_operate_fn original_timestretch_fgpr;
 static set_beatfx_selected_fn original_set_beatfx_selected;
 /* Logging. */
 
@@ -2184,6 +2182,7 @@ static void remove_channel_tap(void)
 }
 
 #include "rx3_beatfx_broker.h"
+#include "rx3_deck_tap.h"
 
 #include "../../keyshift/1.19/rx3_keyshift.h"
 
@@ -2240,6 +2239,7 @@ static unsigned int install_features(void)
     unsigned int active = 0;
     /* first, so a feature's install can refuse when a hook it needs is out. */
     install_beat_fx_broker();
+    install_deck_tap();
     for (unsigned int i = 0; i < RUNTIME_FEATURE_COUNT; i++) {
         struct rx3_runtime_feature *feature = &runtime_features[i];
         if (!feature->active)
@@ -2262,6 +2262,7 @@ static void remove_features(void)
 {
     remove_channel_tap();
     remove_beat_fx_broker();
+    remove_deck_tap();
     for (unsigned int i = RUNTIME_FEATURE_COUNT; i > 0u; i--) {
         struct rx3_runtime_feature *feature = &runtime_features[i - 1u];
         if (feature->remove)

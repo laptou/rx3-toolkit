@@ -14,18 +14,10 @@
 #ifndef RX3_KEYSHIFT_DECL_H
 #define RX3_KEYSHIFT_DECL_H
 
-#define TIMESTRETCH_STREAM ((unsigned long)0x000c292c)
-/* dsp::TimeStretchScratch::operate is the live playback producer: hardware
-   tracing showed every call to the TimeStretch wrapper coming from inside it,
-   scratching or not, because it also carries varispeed. It reads overlapping
-   source windows through that wrapper and resamples them, so its output -- not
-   its input -- is the deck's block stream, and that is where a sequential DSP
-   belongs. It derives from TimeStretch, so +4 is still the reader. */
-#define TIMESTRETCH_OPERATE ((unsigned long)0x000a22a0)
-/* dsp::TimeStretchFGPR::operate replaces the one above while Master Tempo is
-   on: the two are mutually exclusive, which is why the shift simply vanished
-   with key lock engaged instead of sounding wrong. Same contract, same base. */
-#define TIMESTRETCH_FGPR_OPERATE ((unsigned long)0x000a73bc)
+/* The pitch stage sits on the core's deck tap (rx3_deck_tap.h): the output of
+   both resamplers, TimeStretchScratch and, while Master Tempo is on,
+   TimeStretchFGPR. Missing the second is why the shift used to vanish with key
+   lock engaged. */
 
 /* ui_Deck_Update(deck) draws each deck's play-screen track info. */
 #define DECK_UPDATE ((unsigned long)0x0028fa1c)
@@ -82,11 +74,6 @@ struct rx3_keyshift_deck {
 static struct rx3_keyshift_deck keyshift_decks[2];
 static int keyshift_enabled;
 
-typedef unsigned long (*timestretch_stream_fn)(void *, long, Float2 *,
-                                              unsigned int);
-typedef long (*timestretch_operate_fn)(void *, long, Float2 *,
-                                      unsigned int);
-
 typedef void *(*pitch_ctor_fn)(void *);
 typedef void *(*pitch_dtor_fn)(void *);
 typedef void (*pitch_initialize_fn)(void *);
@@ -99,20 +86,11 @@ typedef void (*deck_update_fn)(int);
 static const uint8_t deck_update_guard[8] = {
     0xf0, 0x4f, 0x2d, 0xe9, 0xdc, 0x30, 0xa0, 0xe3
 };
-static const uint8_t timestretch_stream_guard[8] = {
-    0xf8, 0x40, 0x2d, 0xe9, 0x00, 0x40, 0xa0, 0xe1
-};
-static const uint8_t timestretch_operate_guard[8] = {
-    0xf0, 0x4f, 0x2d, 0xe9, 0x08, 0x8b, 0x2d, 0xed
-};
-static const uint8_t timestretch_fgpr_guard[8] = {
-    0xf0, 0x4f, 0x2d, 0xe9, 0x02, 0x8b, 0x2d, 0xed
-};
-
 /* What the core may call. Everything else here is private to the module. */
-static void rx3_keyshift_install(void);
 static int rx3_keyshift_ready(void);
 static void rx3_keyshift_remove(void);
+static void rx3_keyshift_stretch_block(void *stretch, Float2 *output,
+                                       unsigned int frames);
 static void rx3_keyshift_report(void);
 static void rx3_keyshift_start_audio(unsigned int sample_rate);
 static int rx3_keyshift_semitones(unsigned int deck);

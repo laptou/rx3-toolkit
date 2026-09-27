@@ -41,7 +41,8 @@
     "rx3_feature_api.h",
     "rx3_ds_gr.h",
     "rx3_image_relabel.h",
-    "rx3_beatfx_broker.h"
+    "rx3_beatfx_broker.h",
+    "rx3_deck_tap.h"
   ],
   "arm_hook": {
     "source": "rx3_core_hook.c",

@@ -4,8 +4,8 @@
  *
  * Included by the core hook after its logging, hook installer and deck table
  * are in place. Nothing in the core implements key shift; it only calls
- * rx3_keyshift_install, rx3_keyshift_remove, and the accessors the KEY panel
- * needs.
+ * rx3_keyshift_stretch_block from its deck tap, rx3_keyshift_remove, and the
+ * accessors the KEY panel needs.
  *
  * The pitch stage sits on dsp::TimeStretchScratch::operate and its Master Tempo
  * counterpart, which are the deck's playback blocks. It deliberately does not
@@ -239,8 +239,8 @@ static void apply_pitch(unsigned int deck, struct rx3_keyshift_deck *context,
 /* The pitch stage: the resampler's output, one block of the deck's playback
    stream. Every block is offered, silent ones included, because skipping one
    would break the delay line's continuity. */
-static void pitch_resampler_output(void *stretch, Float2 *output,
-                                   unsigned int frames)
+static void rx3_keyshift_stretch_block(void *stretch, Float2 *output,
+                                       unsigned int frames)
 {
     int deck = deck_index_for_reader(
         *(void *const *)((const uint8_t *)stretch + 4u));
@@ -249,37 +249,6 @@ static void pitch_resampler_output(void *stretch, Float2 *output,
     operate_calls++;
     operate_frames = frames;
     apply_pitch((unsigned int)deck, &keyshift_decks[deck], output, frames);
-}
-
-/* Varispeed and scratch playback. */
-static long hooked_timestretch_operate(void *stretch, long position,
-                                       Float2 *output, unsigned int frames)
-{
-    long result = original_timestretch_operate(stretch, position, output,
-                                               frames);
-    pitch_resampler_output(stretch, output, frames);
-    {
-        int deck = deck_index_for_reader(
-            *(void *const *)((const uint8_t *)stretch + 4u));
-        if (deck >= 0)
-            rx3_notify_playhead((unsigned int)deck, position);
-    }
-    return result;
-}
-
-/* The same stage while Master Tempo is on. */
-static long hooked_timestretch_fgpr(void *stretch, long position,
-                                    Float2 *output, unsigned int frames)
-{
-    long result = original_timestretch_fgpr(stretch, position, output, frames);
-    pitch_resampler_output(stretch, output, frames);
-    {
-        int deck = deck_index_for_reader(
-            *(void *const *)((const uint8_t *)stretch + 4u));
-        if (deck >= 0)
-            rx3_notify_playhead((unsigned int)deck, position);
-    }
-    return result;
 }
 
 /* The core's watcher prints this; the module decides what is worth printing. */
@@ -368,27 +337,13 @@ static void rx3_keyshift_start_audio(unsigned int sample_rate)
     log_number("key shift buffer frames = ", PITCH_MAX_FRAMES);
 }
 
-static void rx3_keyshift_install(void)
-{
-    original_timestretch_operate = (timestretch_operate_fn)install_hook(
-        &timestretch_operate_hook, TIMESTRETCH_OPERATE,
-        timestretch_operate_guard, (void *)hooked_timestretch_operate);
-    original_timestretch_fgpr = (timestretch_operate_fn)install_hook(
-        &timestretch_fgpr_hook, TIMESTRETCH_FGPR_OPERATE,
-        timestretch_fgpr_guard, (void *)hooked_timestretch_fgpr);
-}
-
 static int rx3_keyshift_ready(void)
 {
-    return original_timestretch_operate && original_timestretch_fgpr;
+    return rx3_deck_tap_ready();
 }
 
 static void rx3_keyshift_remove(void)
 {
-    uninstall_hook(&timestretch_fgpr_hook);
-    uninstall_hook(&timestretch_operate_hook);
-    original_timestretch_fgpr = 0;
-    original_timestretch_operate = 0;
     for (unsigned int deck = 0; deck < 2u; deck++)
         destroy_pitch(&keyshift_decks[deck]);
 }

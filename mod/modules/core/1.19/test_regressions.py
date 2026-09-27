@@ -362,7 +362,9 @@ require(
 )
 require(
     '#include "../../keyshift/1.19/rx3_keyshift_feature.h"' in HOOK
-    and "rx3_keyshift_install();" in KEYSHIFT_FEATURE
+    and ".stretch_block = rx3_keyshift_stretch_block," in HOOK
+    and "return rx3_deck_tap_ready();" in (
+        REPOSITORY / "mod/modules/keyshift/1.19/rx3_keyshift.h").read_text()
     and "publish_pitch_percent" not in HOOK
     and "rx3_shifter_process" not in HOOK,
     "the core must delegate key shift to its module, not implement it",

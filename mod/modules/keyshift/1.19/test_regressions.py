@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent
 HOOK = (ROOT.parents[1] / "core/1.19/rx3_core_hook.c").read_text()
 KEYSHIFT = (ROOT / "rx3_keyshift.h").read_text()
 DECL = (ROOT / "rx3_keyshift_decl.h").read_text()
+TAP = (ROOT.parents[1] / "core/1.19/rx3_deck_tap.h").read_text()
 SHIFTER = (ROOT / "rx3_pitch_shift.h").read_text()
 MODULE = (ROOT / "module.sh").read_text()
 FEATURE = (ROOT / "rx3_keyshift_feature.h").read_text()
@@ -57,8 +58,10 @@ require(
 # -- where the pitch stage sits ------------------------------------------------
 
 require(
-    "#define TIMESTRETCH_OPERATE ((unsigned long)0x000a22a0)" in DECL
-    and "#define TIMESTRETCH_FGPR_OPERATE ((unsigned long)0x000a73bc)" in DECL,
+    "#define TIMESTRETCH_OPERATE ((unsigned long)0x000a22a0)" in TAP
+    and "#define TIMESTRETCH_FGPR_OPERATE ((unsigned long)0x000a73bc)" in TAP
+    and "runtime_features[index].stretch_block(stretch, output, frames);" in TAP
+    and "TIMESTRETCH" not in DECL and "TIMESTRETCH" not in KEYSHIFT,
     "the stage must sit on both resamplers: the second one replaces the first "
     "while Master Tempo is on, which is why the shift used to vanish",
 )

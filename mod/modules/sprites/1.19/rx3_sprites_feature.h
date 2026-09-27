@@ -130,7 +130,6 @@ struct sprite_window {
 
 static const char *sprites_dir;
 static uint32_t sprites_nonce = 1u;
-static int sprites_owns_timestretch;
 static struct sprite_deck sprite_decks[2];
 static struct sprite_job *volatile sprite_jobs[2];
 static struct sprite_window sprite_window = { { 0, 0, 0, 0, 0 }, -1, 0, 0, 0 };
@@ -299,81 +298,6 @@ static int sprite_header_ok(struct rx3_sprite_file_header *header, size_t size)
     return (int)frame_bytes;
 }
 
-
-/* the deck's beat grid, as rbp's quantize code reads it:
- *   PcmReader +4 ReaderImpl, ReaderImpl +0x69c BeatPosition (ReaderOwner::getBeatPos)
- *   BeatPosition +0x24 count, +0x28 grid offset (ms), +0x34/+0x38 beat vector
- *   each beat is 8 bytes: +0 beat in bar (1-4), +2 bpm x100, +4 time (ms)
- * plain loads only. quantize helpers lock and write scratch fields. a track
- * load swaps in a new ReaderImpl, so the pointers are checked again at the
- * end. position is the timestretch playhead in 44.1 khz track samples. the
- * count is shifted so bar downbeats land on multiples of 4. */
-static int sprite_read_beat_phase(unsigned deck, long position,
-                                  uint32_t *phase_milli)
-{
-    const uint8_t *reader = (const uint8_t *)deck_readers[deck];
-    const uint8_t *impl;
-    const uint8_t *grid;
-    const uint8_t *beats;
-    const uint8_t *end;
-    uint32_t count;
-    uint32_t low = 0;
-    uint32_t high;
-    uint32_t index;
-    int32_t offset;
-    int32_t target;
-    int32_t time_at;
-    int32_t width;
-    uint16_t number;
-    double beat;
-    if (!reader || position < 0)
-        return -1;
-    impl = *(const uint8_t *const volatile *)(reader + 4u);
-    if (!impl)
-        return -1;
-    grid = *(const uint8_t *const volatile *)(impl + 0x69cu);
-    if (!grid)
-        return -1;
-    count = *(const volatile uint32_t *)(grid + 0x24u);
-    offset = *(const volatile int32_t *)(grid + 0x28u);
-    beats = *(const uint8_t *const volatile *)(grid + 0x34u);
-    end = *(const uint8_t *const volatile *)(grid + 0x38u);
-    if (!count || count > 0x100000u || !beats || end != beats + count * 8u)
-        return -1;
-    target = (int32_t)((double)position / 44.1) - offset;
-    /* first beat after the target, then step back one. */
-    high = count;
-    while (low < high) {
-        uint32_t middle = low + (high - low) / 2u;
-        if (*(const int32_t *)(beats + middle * 8u + 4u) <= target)
-            low = middle + 1u;
-        else
-            high = middle;
-    }
-    index = low ? low - 1u : 0u;
-    time_at = *(const int32_t *)(beats + index * 8u + 4u);
-    if (index + 1u < count) {
-        width = *(const int32_t *)(beats + (index + 1u) * 8u + 4u) - time_at;
-    } else {
-        uint16_t bpm = *(const uint16_t *)(beats + index * 8u + 2u);
-        if (!bpm)
-            return -1;
-        width = (int32_t)(6000000u / bpm);
-    }
-    if (width <= 0)
-        return -1;
-    beat = (double)index + (double)(target - time_at) / (double)width;
-    number = *(const uint16_t *)(beats + index * 8u);
-    if (number >= 1u && number <= 4u)
-        beat += (double)rx3_umod(number + 3u - rx3_umod(index, 4u), 4u);
-    if (beat < 0.0)
-        beat = 0.0;
-    if (*(const uint8_t *const volatile *)(reader + 4u) != impl ||
-        *(const uint8_t *const volatile *)(impl + 0x69cu) != grid)
-        return -1;
-    *phase_milli = (uint32_t)(beat * 1000.0);
-    return 0;
-}
 
 static int sprite_publish(struct sprite_job *job)
 {
@@ -824,15 +748,15 @@ static void sprites_feature_after_image(void *render, void *image,
 
 static void sprites_feature_playhead(unsigned int deck, long position)
 {
-    uint32_t phase = 0;
+    double beat;
     if (deck >= 2u)
         return;
     sprite_decks[deck].position = position;
-    if (sprite_read_beat_phase(deck, position, &phase)) {
+    if (rx3_deck_beat(deck, position, &beat)) {
         sprite_decks[deck].have_phase = 0;
         return;
     }
-    sprite_decks[deck].phase_milli = phase;
+    sprite_decks[deck].phase_milli = (uint32_t)(beat * 1000.0);
     sprite_decks[deck].have_phase = 1;
 }
 
@@ -865,28 +789,6 @@ static void sprites_feature_channel_block(unsigned int deck, void *channel,
     fall = 1.0f - (float)frames / SPRITE_FALL_SAMPLES;
     envelope = fall > 0.0f ? envelope * fall : 0.0f;
     bass->envelope = peak > envelope ? peak : envelope;
-}
-
-static long sprites_timestretch_operate(void *stretch, long position,
-                                       Float2 *output, unsigned int frames)
-{
-    long result = original_timestretch_operate(stretch, position, output, frames);
-    int deck = deck_index_for_reader(
-        *(void *const *)((const uint8_t *)stretch + 4u));
-    if (deck >= 0)
-        rx3_notify_playhead((unsigned int)deck, position);
-    return result;
-}
-
-static long sprites_timestretch_fgpr(void *stretch, long position,
-                                    Float2 *output, unsigned int frames)
-{
-    long result = original_timestretch_fgpr(stretch, position, output, frames);
-    int deck = deck_index_for_reader(
-        *(void *const *)((const uint8_t *)stretch + 4u));
-    if (deck >= 0)
-        rx3_notify_playhead((unsigned int)deck, position);
-    return result;
 }
 
 static int sprites_feature_configured(void)
@@ -940,19 +842,8 @@ static int sprites_feature_install(void)
         sprite_start_load(1u, "boot");
     }
     sprite_menu_install();
-    if (original_timestretch_operate)
-        return 1;
-    original_timestretch_operate = (timestretch_operate_fn)install_hook(
-        &timestretch_operate_hook, TIMESTRETCH_OPERATE, timestretch_operate_guard,
-        (void *)sprites_timestretch_operate);
-    original_timestretch_fgpr = (timestretch_operate_fn)install_hook(
-        &timestretch_fgpr_hook, TIMESTRETCH_FGPR_OPERATE, timestretch_fgpr_guard,
-        (void *)sprites_timestretch_fgpr);
-    if (!original_timestretch_operate || !original_timestretch_fgpr) {
-        log_line("sprites: playback position hook unavailable, beat sync stays off");
-        return 1;
-    }
-    sprites_owns_timestretch = 1;
+    if (!rx3_deck_tap_ready())
+        log_line("sprites: playback position unavailable, beat sync stays off");
     return 1;
 }
 
@@ -960,13 +851,6 @@ static void sprites_feature_remove(void)
 {
     unsigned deck;
     sprite_menu_remove();
-    if (sprites_owns_timestretch) {
-        uninstall_hook(&timestretch_fgpr_hook);
-        uninstall_hook(&timestretch_operate_hook);
-        original_timestretch_fgpr = 0;
-        original_timestretch_operate = 0;
-        sprites_owns_timestretch = 0;
-    }
     for (deck = 0; deck < 2u; deck++) {
         struct sprite_job *job = sprite_jobs[deck];
         sprite_jobs[deck] = 0;
