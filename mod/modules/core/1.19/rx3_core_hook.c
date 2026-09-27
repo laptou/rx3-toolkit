@@ -93,8 +93,9 @@
 #define TAB_IMAGE_BYTES 18000u
 #define TAB_IMAGE_COUNT 4u
 #define STOCK_IMAGE_COUNT 0x15cdu
-/* 0x1600..0x1603 are the tabs. 0x1604..0x1702 are sprite frames.
-   0x1703 is the hard-mask probe. the bound is the last legal id. */
+/* 0x1600..0x1603 are the tabs. 0x1604..0x1702 are relabelled copies of
+   stock images. 0x1703 is the hard-mask probe. the bound is the last legal
+   id. */
 #define EXTENDED_IMAGE_COUNT 0x1704u
 #define IMAGE_TABLE_POINTER ((unsigned long)0x05a14f60)
 #define TAB_KEY_PATH "/root/pdj/rx3-key-selected.rgb565"
@@ -373,45 +374,69 @@ static void sprites_feature_channel_block(unsigned int deck, void *channel,
                                           Float2 *output, int frames);
 static void sidechain_feature_channel_block(unsigned int deck, void *channel,
                                             Float2 *output, int frames);
+static int sidechain_feature_beat_fx_operate(void *manager, Float2 *buffer,
+                                             int frames);
+static int sidechain_feature_beat_fx_beat(void *innards, long delta);
+static void sidechain_feature_beat_fx_info(uint8_t *block);
+static uint32_t sidechain_feature_image_swap(uint32_t image_id);
 static void rx3_notify_playhead(unsigned int deck, long position);
 static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
+static uint32_t rx3_swap_image(uint32_t image_id);
 
 #define RUNTIME_FEATURE_COUNT 5u
 
 static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
-        "keyshift", 0, &keyshift_panel,
-        keyshift_feature_configured, keyshift_feature_install,
-        keyshift_feature_remove, 0, keyshift_feature_track_did_load,
-        rx3_keyshift_start_audio, rx3_keyshift_report,
-        rx3_keyshift_destroy_deck, 0, 0, 0
+        .name = "keyshift",
+        .panel = &keyshift_panel,
+        .configured = keyshift_feature_configured,
+        .install = keyshift_feature_install,
+        .remove = keyshift_feature_remove,
+        .track_did_load = keyshift_feature_track_did_load,
+        .audio_started = rx3_keyshift_start_audio,
+        .report = rx3_keyshift_report,
+        .destroy_deck = rx3_keyshift_destroy_deck,
     },
     {
-        "stems", 0, &stems_panel,
-        stems_feature_configured, stems_feature_install,
-        stems_feature_remove, stems_feature_track_will_load,
-        stems_feature_track_did_load, 0, 0, stems_feature_destroy_deck, 0, 0,
-        0
+        .name = "stems",
+        .panel = &stems_panel,
+        .configured = stems_feature_configured,
+        .install = stems_feature_install,
+        .remove = stems_feature_remove,
+        .track_will_load = stems_feature_track_will_load,
+        .track_did_load = stems_feature_track_did_load,
+        .destroy_deck = stems_feature_destroy_deck,
     },
     {
-        "sprites", 0, 0,
-        sprites_feature_configured, sprites_feature_install,
-        sprites_feature_remove, sprites_feature_track_will_load,
-        sprites_feature_track_did_load, 0, 0, sprites_feature_destroy_deck,
-        sprites_feature_playhead, sprites_feature_after_image,
-        sprites_feature_channel_block
+        .name = "sprites",
+        .configured = sprites_feature_configured,
+        .install = sprites_feature_install,
+        .remove = sprites_feature_remove,
+        .track_will_load = sprites_feature_track_will_load,
+        .track_did_load = sprites_feature_track_did_load,
+        .destroy_deck = sprites_feature_destroy_deck,
+        .playhead = sprites_feature_playhead,
+        .after_image = sprites_feature_after_image,
+        .channel_block = sprites_feature_channel_block,
     },
     {
-        "sidechain", 0, 0,
-        sidechain_feature_configured, sidechain_feature_install,
-        sidechain_feature_remove, 0, 0, 0, 0, 0, 0,
-        sidechain_feature_after_image, sidechain_feature_channel_block
+        .name = "sidechain",
+        .configured = sidechain_feature_configured,
+        .install = sidechain_feature_install,
+        .remove = sidechain_feature_remove,
+        .after_image = sidechain_feature_after_image,
+        .channel_block = sidechain_feature_channel_block,
+        .beat_fx_operate = sidechain_feature_beat_fx_operate,
+        .beat_fx_beat = sidechain_feature_beat_fx_beat,
+        .beat_fx_info = sidechain_feature_beat_fx_info,
+        .image_swap = sidechain_feature_image_swap,
     },
     {
-        "bandpass", 0, 0,
-        bandpass_feature_configured, bandpass_feature_install,
-        bandpass_feature_remove, 0, 0, 0, 0, 0, 0, 0, 0
+        .name = "bandpass",
+        .configured = bandpass_feature_configured,
+        .install = bandpass_feature_install,
+        .remove = bandpass_feature_remove,
     }
 };
 
@@ -643,7 +668,7 @@ static void install_tab_assets(void)
         memcpy(record + 0x24u, &no_palette, sizeof(no_palette));
     }
 
-    /* unused sprite ids stay valid images until a pack replaces one,
+    /* unused relabel ids stay valid images until a copy replaces one,
        before that id is drawn. a zero record would be a bad lookup. */
     for (unsigned int id = TAB_IMAGE_KEY_NONE + 1u; id < EXTENDED_IMAGE_COUNT; id++) {
         uint8_t *record = table + id * 44u;
@@ -666,6 +691,8 @@ static void install_tab_assets(void)
     tab_assets_ready = 1u;
     log_line("extended private KEY/STEMS image table installed");
 }
+
+#include "rx3_image_relabel.h"
 
 static void *watch_patch_state(void *unused)
 {
@@ -1466,7 +1493,15 @@ static void hooked_draw_image(void *render, void *image)
     }
 
     if (image_id != 0x15c9u && image_id != 0x15cau) {
-        original_draw_image(render, image);
+        uint32_t swapped = rx3_swap_image(image_id);
+        if (swapped != image_id) {
+            uint8_t relabelled[0x54];
+            memcpy(relabelled, image, sizeof(relabelled));
+            set_u32(relabelled, 0x44, swapped);
+            original_draw_image(render, relabelled);
+        } else {
+            original_draw_image(render, image);
+        }
         rx3_notify_image(render, image, window_layer, image_id);
         return;
     }
@@ -2148,6 +2183,8 @@ static void remove_channel_tap(void)
     original_update_filter = 0;
 }
 
+#include "rx3_beatfx_broker.h"
+
 #include "../../keyshift/1.19/rx3_keyshift.h"
 
 /* Shared hook replacement. Feature-specific hooks are composed below. */
@@ -2201,6 +2238,8 @@ static unsigned int configure_features(void)
 static unsigned int install_features(void)
 {
     unsigned int active = 0;
+    /* first, so a feature's install can refuse when a hook it needs is out. */
+    install_beat_fx_broker();
     for (unsigned int i = 0; i < RUNTIME_FEATURE_COUNT; i++) {
         struct rx3_runtime_feature *feature = &runtime_features[i];
         if (!feature->active)
@@ -2222,6 +2261,7 @@ static unsigned int install_features(void)
 static void remove_features(void)
 {
     remove_channel_tap();
+    remove_beat_fx_broker();
     for (unsigned int i = RUNTIME_FEATURE_COUNT; i > 0u; i--) {
         struct rx3_runtime_feature *feature = &runtime_features[i - 1u];
         if (feature->remove)

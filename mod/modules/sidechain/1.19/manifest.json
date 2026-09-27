@@ -21,6 +21,7 @@
   "build_files": [
     "rx3_sidechain_dsp.h",
     "rx3_sidechain_feature.h",
+    "rx3_sidechain_labels.h",
     "rx3_sidechain_meter.h"
   ]
 }

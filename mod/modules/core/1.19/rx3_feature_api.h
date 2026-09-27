@@ -41,6 +41,15 @@ struct rx3_runtime_feature {
        output just before the mix sums it. the feature may rewrite it. */
     void (*channel_block)(unsigned int deck, void *channel, Float2 *output,
                           int frames);
+    /* audio thread, before the selected beat fx runs on its channel's block
+       in place. nonzero skips the stock effect. */
+    int (*beat_fx_operate)(void *manager, Float2 *buffer, int frames);
+    /* ui thread, the BEAT arrows. nonzero means the feature took them. */
+    int (*beat_fx_beat)(void *innards, long delta);
+    /* ui thread, after rbp filled the play screen's beat fx block. */
+    void (*beat_fx_info)(uint8_t *block);
+    /* ui thread, the image to draw instead of image_id, or image_id. */
+    uint32_t (*image_swap)(uint32_t image_id);
 };
 
 #endif /* RX3_FEATURE_API_H */

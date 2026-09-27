@@ -36,7 +36,7 @@ require(
 )
 require(
     '#include "../../bandpass/1.19/rx3_bandpass_feature.h"' in HOOK
-    and '"bandpass", 0, 0,' in HOOK,
+    and '.name = "bandpass",' in HOOK,
     "the core must compile and register the feature",
 )
 require(

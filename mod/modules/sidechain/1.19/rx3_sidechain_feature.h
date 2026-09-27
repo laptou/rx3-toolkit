@@ -19,6 +19,12 @@
  * the BEAT arrows step the ratio: MasterInnards::onEv_BeatFxBeat(this,
  * delta) is taken over while its type (+0x3c, ui numbering) is helix, 4.
  *
+ * on screen, helix's caption images read SIDECHAIN, and the beat number
+ * reads the ratio. the play screen's beat fx block names its beat number by
+ * a label index (+0x10); each ratio writes its own label there, so rbp
+ * redraws when the ratio changes, and that label's number image is swapped
+ * for the ratio's lettering.
+ *
  * CH1 runs before CH2, so a CH2 trigger keys CH1 one block late.
  */
 
@@ -28,33 +34,37 @@
 #include "../../core/1.19/rx3_ds_gr.h"
 #include "rx3_sidechain_dsp.h"
 #include "rx3_sidechain_meter.h"
+#include "rx3_sidechain_labels.h"
 
-#define OPERATE_BEAT_EFFECT ((unsigned long)0x0008a52c)
-#define BEAT_FX_BEAT_EVENT ((unsigned long)0x0034553c)
 #define BEAT_FX_HELIX 14
 #define BEAT_FX_UI_HELIX 4
-
-typedef void (*operate_beat_effect_fn)(void *, Float2 *, int, int);
-typedef int (*beat_fx_beat_event_fn)(void *, long);
-
-/* stmdb sp!,{r3-r8,r10,lr} ; mov r6,r1 */
-static const uint8_t operate_beat_effect_guard[8] = {
-    0xf8, 0x45, 0x2d, 0xe9, 0x01, 0x60, 0xa0, 0xe1
-};
-/* ldrb r3,[r0,#0xe9] ; stmdb sp!,{r4-r8,lr} */
-static const uint8_t beat_fx_beat_event_guard[8] = {
-    0xe9, 0x30, 0xd0, 0xe5, 0xf0, 0x41, 0x2d, 0xe9
-};
+/* the play screen's display numbering (CSWTCH.55 of the ui type). */
+#define BEAT_FX_DISPLAY_HELIX 13
+/* ui_PlayGroup +0x1e0, the copy of the beat fx block the ui draws from. */
+#define BEAT_FX_SHOWN_TYPE ((const volatile int *)0x032b2c68)
+/* two colour banks of 16 beat-number images, by label index. */
+#define BEAT_NUMBER_IMAGES ((const uint16_t *)0x004c4780)
+#define BEAT_NUMBER_IMAGE_COUNT 32u
+#define BEAT_NUMBER_FIRST_ID 0x1547u
+#define BEAT_NUMBER_LAST_ID 0x1561u
+#define HELIX_CAPTION_A 0x144bu
+#define HELIX_CAPTION_B 0x144cu
 
 struct sc_deck {
     volatile float level_l2;
     float gain;
 };
 
-static struct installed_hook operate_beat_effect_hook;
-static struct installed_hook beat_fx_beat_event_hook;
-static operate_beat_effect_fn original_operate_beat_effect;
-static beat_fx_beat_event_fn original_beat_fx_beat_event;
+/* the beat labels the ratios borrow: 1/16 1/8 1/4 1/2 3/4 16 32 64. */
+static const uint32_t sc_ratio_beat_labels[SC_RATIO_COUNT] = {
+    3u, 4u, 5u, 6u, 7u, 12u, 13u, 14u,
+};
+static const struct rx3_label_mask *const sc_ratio_masks[SC_RATIO_COUNT] = {
+    &sc_label_ratio_2, &sc_label_ratio_3, &sc_label_ratio_4,
+    &sc_label_ratio_6, &sc_label_ratio_8, &sc_label_ratio_12,
+    &sc_label_ratio_20, &sc_label_ratio_inf,
+};
+
 static struct sc_deck sc_decks[2] = { { -40.0f, 1.0f }, { -40.0f, 1.0f } };
 static volatile unsigned sc_ratio_index = SC_RATIO_DEFAULT;
 static int sc_logged;
@@ -146,27 +156,55 @@ static void sidechain_feature_channel_block(unsigned int deck, void *channel,
 
 /* helix stays dry: its wet path is skipped while it is the settled effect.
    a switch to or from helix still runs stock, so rbp's crossfade happens. */
-static void hooked_operate_beat_effect(void *manager, Float2 *buf, int frames,
-                                       int preview)
+static int sidechain_feature_beat_fx_operate(void *manager, Float2 *buffer,
+                                             int frames)
 {
-    if (manager && sc_helix_settled((const uint8_t *)manager))
-        return;
-    original_operate_beat_effect(manager, buf, frames, preview);
+    (void)buffer;
+    (void)frames;
+    return sc_helix_settled((const uint8_t *)manager);
 }
 
 /* the BEAT arrows pick the ratio while helix is the selected beat fx. */
-static int hooked_beat_fx_beat_event(void *innards, long delta)
+static int sidechain_feature_beat_fx_beat(void *innards, long delta)
 {
     long index;
     if (*(const int *)((const uint8_t *)innards + 0x3cu) != BEAT_FX_UI_HELIX)
-        return original_beat_fx_beat_event(innards, delta);
+        return 0;
     index = (long)sc_ratio_index + delta;
     if (index < 0)
         index = 0;
     if (index >= (long)SC_RATIO_COUNT)
         index = (long)SC_RATIO_COUNT - 1;
     sc_ratio_index = (unsigned)index;
-    return 0;
+    return 1;
+}
+
+static void sidechain_feature_beat_fx_info(uint8_t *block)
+{
+    if (*(const int *)block == BEAT_FX_DISPLAY_HELIX)
+        *(uint32_t *)(block + 0x10u) = sc_ratio_beat_labels[sc_ratio_index];
+}
+
+static uint32_t sidechain_feature_image_swap(uint32_t image_id)
+{
+    unsigned index;
+    unsigned ratio;
+    uint32_t label;
+    if (image_id == HELIX_CAPTION_A || image_id == HELIX_CAPTION_B)
+        return rx3_relabel_image(image_id, &sc_label_caption);
+    if (image_id < BEAT_NUMBER_FIRST_ID || image_id > BEAT_NUMBER_LAST_ID ||
+        *BEAT_FX_SHOWN_TYPE != BEAT_FX_DISPLAY_HELIX)
+        return image_id;
+    for (index = 0; index < BEAT_NUMBER_IMAGE_COUNT; index++)
+        if (BEAT_NUMBER_IMAGES[index] == image_id)
+            break;
+    if (index == BEAT_NUMBER_IMAGE_COUNT)
+        return image_id;
+    label = index % 16u;
+    for (ratio = 0; ratio < SC_RATIO_COUNT; ratio++)
+        if (sc_ratio_beat_labels[ratio] == label)
+            return rx3_relabel_image(image_id, sc_ratio_masks[ratio]);
+    return image_id;
 }
 
 /* driven from rbp's image draws, which run on its ui thread. */
@@ -187,23 +225,15 @@ static int sidechain_feature_configured(void)
     return flag && flag[0] == '1';
 }
 
+/* without the operate and beat hooks helix would play wet and the arrows
+   would change its beat, so the feature does not start. */
 static int sidechain_feature_install(void)
 {
-    original_operate_beat_effect = (operate_beat_effect_fn)install_hook(
-        &operate_beat_effect_hook, OPERATE_BEAT_EFFECT,
-        operate_beat_effect_guard, (void *)hooked_operate_beat_effect);
-    original_beat_fx_beat_event = (beat_fx_beat_event_fn)install_hook(
-        &beat_fx_beat_event_hook, BEAT_FX_BEAT_EVENT, beat_fx_beat_event_guard,
-        (void *)hooked_beat_fx_beat_event);
     return original_operate_beat_effect && original_beat_fx_beat_event;
 }
 
 static void sidechain_feature_remove(void)
 {
-    uninstall_hook(&beat_fx_beat_event_hook);
-    uninstall_hook(&operate_beat_effect_hook);
-    original_beat_fx_beat_event = 0;
-    original_operate_beat_effect = 0;
     rx3_gr_close(&sc_meter_window);
 }
 
