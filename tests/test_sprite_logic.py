@@ -36,6 +36,8 @@ class SpriteLogicTests(unittest.TestCase):
         self.assertEqual(int(lines["fps"]), fps_frame(500, 10, 1, 4))
         self.assertEqual(int(lines["phase-zero"]), phase_frame(0, 1, 1, 4))
         self.assertEqual(int(lines["phase-seek"]), phase_frame(2500, 1, 1, 4))
+        self.assertEqual(int(lines["phase-loop"]), phase_frame(3500, 2, 4, 8))
+        self.assertEqual(phase_frame(3500, 2, 4, 8), 7)
         self.assertIsNone(phase_frame(None, 1, 1, 4))
         self.assertEqual(lines["phase-missing"], "1")
         names = ["a.rx3spr", "b.rx3spr"]

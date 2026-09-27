@@ -25,6 +25,10 @@ int main(void)
     if (rx3_sprite_phase_frame(1, 2500u, 1u, 1u, 4u, &frame) || frame != 2u)
         return 4;
     printf("phase-seek %u\n", frame);
+    /* 2 frames a beat over a 4-beat loop: beat 3.5 is frame 7. */
+    if (rx3_sprite_phase_frame(1, 3500u, 2u, 4u, 8u, &frame) || frame != 7u)
+        return 7;
+    printf("phase-loop %u\n", frame);
     if (rx3_sprite_phase_frame(0, 2500u, 1u, 1u, 4u, &frame) == 0)
         return 5;
     printf("phase-missing 1\n");

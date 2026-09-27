@@ -121,7 +121,8 @@ static int rx3_sprite_phase_frame(int have_phase, uint32_t phase_milli,
     if (!have_phase || !frame_out || !frame_count || !frames_per_beat ||
         !beats_per_loop)
         return -1;
-    ticks = (uint64_t)phase_milli * frames_per_beat / beats_per_loop / 1000u;
+    /* one loop is frames_per_beat * beats_per_loop = frame_count frames. */
+    ticks = (uint64_t)phase_milli * frames_per_beat / 1000u;
     *frame_out = (unsigned)(ticks % frame_count);
     return 0;
 }

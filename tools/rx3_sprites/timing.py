@@ -30,5 +30,6 @@ def phase_frame(
         or beats_per_loop <= 0
     ):
         return None
-    ticks = phase_milli * frames_per_beat // beats_per_loop // 1000
+    # one loop is frames_per_beat * beats_per_loop = frame_count frames.
+    ticks = phase_milli * frames_per_beat // 1000
     return ticks % frame_count
