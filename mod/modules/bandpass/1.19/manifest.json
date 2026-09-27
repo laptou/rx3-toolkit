@@ -1,0 +1,25 @@
+{
+  "id": "bandpass",
+  "name": "Band-pass",
+  "description": "Turns the DUB ECHO color FX into a sweepable band-pass filter: COLOR left slides the band down to the bass, right up to the treble, and PARAMETER sets the resonance.",
+  "firmware": "1.19",
+  "default": false,
+  "order": 110,
+  "runtime_directory": "bandpass",
+  "namespace": "bandpass",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_bandpass_dsp.h",
+    "rx3_bandpass_feature.h"
+  ]
+}

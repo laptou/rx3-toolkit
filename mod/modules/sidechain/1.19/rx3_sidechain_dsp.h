@@ -3,9 +3,9 @@
  * no libc and no libm: the arm hook links neither, so log2 and exp2 are
  * short polynomials, good to about 0.05 db, which is plenty for gain.
  *
- * each channel's color knob picks its role. left of centre makes it a
- * source, further left lowers the threshold. right of centre makes it
- * compressed, further right raises the ratio. the centre is off.
+ * the helix beat fx drives it: the beat fx channel is the trigger and the
+ * other deck is ducked. DEPTH lowers the threshold, the BEAT arrows step
+ * through the ratios, and TIME is the release.
  */
 
 #ifndef RX3_SIDECHAIN_DSP_H
@@ -15,23 +15,17 @@
 #include <stdint.h>
 #endif
 
-#define SC_ROLE_OFF 0
-#define SC_ROLE_SOURCE 1
-#define SC_ROLE_COMPRESSED 2
-
-#define SC_DEAD_ZONE 0.04f
 #define SC_THRESHOLD_RANGE_DB 36.0f
-#define SC_RATIO_MAX 20.0f
+#define SC_RATIO_COUNT 8u
+#define SC_RATIO_DEFAULT 2u
+/* the last step is a limiter; the cut still stops at SC_GAIN_FLOOR_L2. */
+static const float sc_ratios[SC_RATIO_COUNT] = {
+    2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f, 20.0f, 1000.0f
+};
 /* the deepest cut, 24 db, in log2 units. */
 #define SC_GAIN_FLOOR_L2 (-3.9863f)
 #define SC_DB_PER_L2 6.0206f
 #define SC_SAMPLE_RATE 44100.0f
-
-struct sc_role {
-    int role;
-    float threshold_l2;
-    float ratio;
-};
 
 static float sc_log2(float value)
 {
@@ -69,28 +63,14 @@ static float sc_exp2(float value)
     return bits.f;
 }
 
-/* knob 0..1 to a role. */
-static struct sc_role sc_role_for_knob(float knob)
+/* depth dial 0..1 to a threshold in log2: 0 db down to -36 db. */
+static float sc_threshold_l2(float depth)
 {
-    struct sc_role out;
-    float span = 0.5f - SC_DEAD_ZONE;
-    out.role = SC_ROLE_OFF;
-    out.threshold_l2 = 0.0f;
-    out.ratio = 1.0f;
-    if (knob < 0.5f - SC_DEAD_ZONE) {
-        float depth = (0.5f - SC_DEAD_ZONE - knob) / span;
-        if (depth > 1.0f)
-            depth = 1.0f;
-        out.role = SC_ROLE_SOURCE;
-        out.threshold_l2 = -depth * SC_THRESHOLD_RANGE_DB / SC_DB_PER_L2;
-    } else if (knob > 0.5f + SC_DEAD_ZONE) {
-        float depth = (knob - 0.5f - SC_DEAD_ZONE) / span;
-        if (depth > 1.0f)
-            depth = 1.0f;
-        out.role = SC_ROLE_COMPRESSED;
-        out.ratio = 1.0f + depth * (SC_RATIO_MAX - 1.0f);
-    }
-    return out;
+    if (!(depth > 0.0f))
+        depth = 0.0f;
+    if (depth > 1.0f)
+        depth = 1.0f;
+    return -depth * SC_THRESHOLD_RANGE_DB / SC_DB_PER_L2;
 }
 
 /* gain, in log2, for a key level over the threshold at a ratio. */
@@ -104,17 +84,14 @@ static float sc_gain_l2(float level_l2, float threshold_l2, float ratio)
     return gain < SC_GAIN_FLOOR_L2 ? SC_GAIN_FLOOR_L2 : gain;
 }
 
-/* release in ms: the parameter dial scales one beat of the source deck,
-   from an eighth of a beat (0) through half a beat (0.5) to two beats (1). */
-static float sc_release_ms(float beat_ms, float parameter)
+/* the TIME dial in ms, inside helix's own 10..4000 range. */
+static float sc_release_ms(uint32_t time_ms)
 {
-    if (!(beat_ms > 50.0f && beat_ms < 3000.0f))
-        beat_ms = 500.0f;
-    if (parameter < 0.0f)
-        parameter = 0.0f;
-    if (parameter > 1.0f)
-        parameter = 1.0f;
-    return beat_ms * sc_exp2(4.0f * parameter - 3.0f);
+    if (time_ms < 10u)
+        time_ms = 10u;
+    if (time_ms > 4000u)
+        time_ms = 4000u;
+    return (float)time_ms;
 }
 
 static float sc_attack_ms(float release_ms)

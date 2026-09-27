@@ -37,6 +37,10 @@ struct rx3_runtime_feature {
     void (*playhead)(unsigned int deck, long position);
     void (*after_image)(void *render, void *image, uint16_t window_layer,
                         uint32_t image_id);
+    /* audio thread, once per block per deck, on the channel's post-fader
+       output just before the mix sums it. the feature may rewrite it. */
+    void (*channel_block)(unsigned int deck, void *channel, Float2 *output,
+                          int frames);
 };
 
 #endif /* RX3_FEATURE_API_H */

@@ -1,7 +1,7 @@
 {
   "id": "sidechain",
   "name": "Sidechain",
-  "description": "Turns the DUB ECHO color FX into a sidechain compressor: turn one channel's COLOR knob left to make it the trigger, the other right to duck it, and set the release with PARAMETER.",
+  "description": "Turns the HELIX beat FX into a sidechain compressor: the beat FX channel triggers, the other deck ducks. DEPTH sets the threshold, the BEAT arrows the ratio, and TIME the release.",
   "firmware": "1.19",
   "default": false,
   "order": 100,

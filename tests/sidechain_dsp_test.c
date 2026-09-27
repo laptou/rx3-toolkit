@@ -18,23 +18,21 @@ static int near(float got, float want, float tolerance, const char *what)
 int main(void)
 {
     float value;
-    struct sc_role role;
     for (value = 0.001f; value < 4.0f; value *= 1.37f)
         if (!near(sc_log2(value), log2f(value), 0.01f, "log2"))
             return 1;
     for (value = -20.0f; value < 4.0f; value += 0.173f)
         if (!near(sc_exp2(value), exp2f(value), exp2f(value) * 0.001f, "exp2"))
             return 2;
-    role = sc_role_for_knob(0.5f);
-    if (role.role != SC_ROLE_OFF)
+    if (!near(sc_threshold_l2(0.0f), 0.0f, 0.0001f, "threshold top") ||
+        !near(sc_threshold_l2(1.0f) * SC_DB_PER_L2, -36.0f, 0.01f, "threshold") ||
+        !near(sc_threshold_l2(2.0f) * SC_DB_PER_L2, -36.0f, 0.01f, "threshold clamp"))
         return 3;
-    role = sc_role_for_knob(0.0f);
-    if (role.role != SC_ROLE_SOURCE ||
-        !near(role.threshold_l2 * SC_DB_PER_L2, -36.0f, 0.01f, "threshold"))
+    if (sc_ratios[SC_RATIO_DEFAULT] != 4.0f)
         return 4;
-    role = sc_role_for_knob(1.0f);
-    if (role.role != SC_ROLE_COMPRESSED || !near(role.ratio, 20.0f, 0.01f, "ratio"))
-        return 5;
+    for (value = 1.0f; value < (float)SC_RATIO_COUNT; value += 1.0f)
+        if (!(sc_ratios[(unsigned)value] > sc_ratios[(unsigned)value - 1u]))
+            return 5;
     /* 12 db over at 4:1 cuts 9 db */
     if (!near(sc_gain_l2(0.0f, -12.0f / SC_DB_PER_L2, 4.0f) * SC_DB_PER_L2,
               -9.0f, 0.01f, "gain"))
@@ -44,11 +42,10 @@ int main(void)
     /* the cut never passes 24 db */
     if (!near(sc_gain_l2(0.0f, -10.0f, 20.0f), SC_GAIN_FLOOR_L2, 0.0001f, "floor"))
         return 8;
-    /* 120 bpm: half a beat at the centre of the dial */
-    if (!near(sc_release_ms(500.0f, 0.5f), 250.0f, 1.0f, "release"))
+    /* TIME is the release, inside helix's range */
+    if (sc_release_ms(500u) != 500.0f || sc_release_ms(1u) != 10.0f ||
+        sc_release_ms(9000u) != 4000.0f)
         return 9;
-    if (!near(sc_release_ms(0.0f, 1.0f), 1000.0f, 2.0f, "release default"))
-        return 10;
     if (!near(sc_block_keep(10.0f, 441), expf(-1.0f), 0.002f, "keep"))
         return 11;
     if (!near(sc_attack_ms(160.0f), 10.0f, 0.001f, "attack") ||

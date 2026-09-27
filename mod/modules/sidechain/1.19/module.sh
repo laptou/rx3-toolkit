@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: MPL-2.0
-# Sidechain: the DUB ECHO color fx becomes a sidechain compressor.
+# Sidechain: the HELIX beat fx becomes a sidechain compressor.
 # The code lives in the performance core's shared object; this module decides
 # whether it runs, and owns its documentation and tests.
 
@@ -21,13 +21,13 @@ sidechain_prepare()
         say "Sidechain needs a restart: running rbp carries RX3_SIDECHAIN=[${running:-none}]"
         request_rbp_restart
     fi
-    say "Sidechain prepared: DUB ECHO is the sidechain compressor"
+    say "Sidechain prepared: HELIX is the sidechain compressor"
 }
 
 sidechain_after_launch()
 {
     [ "$SIDECHAIN_READY" = "1" ] || return 0
-    say "DUB ECHO: COLOR left = trigger (threshold), COLOR right = ducked (ratio), PARAMETER = release"
+    say "HELIX: beat fx channel = trigger, other deck ducks; DEPTH = threshold, BEAT arrows = ratio, TIME = release"
 }
 
 register_prepare_hook sidechain_prepare

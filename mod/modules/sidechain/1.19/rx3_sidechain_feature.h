@@ -1,18 +1,25 @@
 /* SPDX-License-Identifier: MPL-2.0
- * sidechain on the DUB ECHO sound color fx, firmware 1.19.
+ * sidechain on the HELIX beat fx, firmware 1.19.
  *
- * rbp sums the mix in software. each mixer channel runs
- * SoundColorFxManager::operate(manager, buf, frames) once per block on the
- * audio thread. while DUB ECHO is the selected type (manager +0x24 == 4) the
- * stock echo is skipped entirely and the block goes through the compressor
- * instead. because the manager never switches to its echo slot, the knobs
- * keep landing on the active effect (*manager): +0x1c color, +0x20 parameter.
- * manager +0x84 is the MixerChannel, whose +0x14 is the input (0 or 1), and
- * mixer input n is fed by deck n.
+ * rbp sums the mix in software. every block, MixerChannel::updateFilter
+ * leaves each deck's post-fader output for the master to sum, and the core
+ * hands that block to channel_block below. while HELIX is the beat fx and
+ * it is ON, the beat fx channel (CH1 or CH2) is the trigger and the other
+ * deck is ducked by its level.
  *
- * the compressed channel keys on the source channel's most recent block
- * peak, which is this block or the one before depending on the order the
- * mixer runs the channels: at most one block late.
+ * the stock helix never runs: operateBeatEffect returns at once while helix
+ * is the settled effect, so the trigger channel plays dry. the controls are
+ * read from the BeatEffectManager (MixerChannel +0x218):
+ *   +0x00 beat fx channel (0 CH1, 1 CH2, others are mic, master, aux)
+ *   +0x04 the channel it is switching to
+ *   +0x08 active effect: +0x24 TIME in ms, +0x3c ON
+ *   +0x4c / +0x50 committed / requested type, 14 is helix
+ *   +0xe8 DEPTH 0..1, as the dial left it; operateBeatEffect is what copies
+ *         it onto the effect, and it no longer runs
+ * the BEAT arrows step the ratio: MasterInnards::onEv_BeatFxBeat(this,
+ * delta) is taken over while its type (+0x3c, ui numbering) is helix, 4.
+ *
+ * CH1 runs before CH2, so a CH2 trigger keys CH1 one block late.
  */
 
 #ifndef RX3_SIDECHAIN_FEATURE_H
@@ -22,56 +29,41 @@
 #include "rx3_sidechain_dsp.h"
 #include "rx3_sidechain_meter.h"
 
-#define COLOR_FX_OPERATE ((unsigned long)0x000bbc68)
-#define COLOR_FX_DUB_ECHO 4
+#define OPERATE_BEAT_EFFECT ((unsigned long)0x0008a52c)
+#define BEAT_FX_BEAT_EVENT ((unsigned long)0x0034553c)
+#define BEAT_FX_HELIX 14
+#define BEAT_FX_UI_HELIX 4
 
-typedef void (*color_fx_operate_fn)(void *, Float2 *, int);
+typedef void (*operate_beat_effect_fn)(void *, Float2 *, int, int);
+typedef int (*beat_fx_beat_event_fn)(void *, long);
 
-/* stmdb sp!,{r3-r8,r10,lr} ; vpush {d8} */
-static const uint8_t color_fx_operate_guard[8] = {
-    0xf8, 0x45, 0x2d, 0xe9, 0x02, 0x8b, 0x2d, 0xed
+/* stmdb sp!,{r3-r8,r10,lr} ; mov r6,r1 */
+static const uint8_t operate_beat_effect_guard[8] = {
+    0xf8, 0x45, 0x2d, 0xe9, 0x01, 0x60, 0xa0, 0xe1
+};
+/* ldrb r3,[r0,#0xe9] ; stmdb sp!,{r4-r8,lr} */
+static const uint8_t beat_fx_beat_event_guard[8] = {
+    0xe9, 0x30, 0xd0, 0xe5, 0xf0, 0x41, 0x2d, 0xe9
 };
 
-struct sc_channel {
+struct sc_deck {
     volatile float level_l2;
-    volatile int role;
-    volatile float threshold_l2;
     float gain;
-    float last_parameter;
 };
 
-static struct installed_hook color_fx_operate_hook;
-static color_fx_operate_fn original_color_fx_operate;
-static struct sc_channel sc_channels[2] = {
-    { -40.0f, SC_ROLE_OFF, 0.0f, 1.0f, -1.0f },
-    { -40.0f, SC_ROLE_OFF, 0.0f, 1.0f, -1.0f },
-};
-/* the parameter dial is one control; take whichever channel saw it move. */
-static volatile float sc_parameter = 0.5f;
+static struct installed_hook operate_beat_effect_hook;
+static struct installed_hook beat_fx_beat_event_hook;
+static operate_beat_effect_fn original_operate_beat_effect;
+static beat_fx_beat_event_fn original_beat_fx_beat_event;
+static struct sc_deck sc_decks[2] = { { -40.0f, 1.0f }, { -40.0f, 1.0f } };
+static volatile unsigned sc_ratio_index = SC_RATIO_DEFAULT;
 static int sc_logged;
 
-/* one beat of the deck's grid in ms, from the first grid entry's bpm. the
-   same plain loads as the sprite beat clock; 0 when there is no grid. */
-static float sc_deck_beat_ms(unsigned deck)
+static int sc_helix_settled(const uint8_t *manager)
 {
-    const uint8_t *reader = (const uint8_t *)deck_readers[deck];
-    const uint8_t *impl;
-    const uint8_t *grid;
-    const uint8_t *beats;
-    uint16_t bpm;
-    if (!reader)
-        return 0.0f;
-    impl = *(const uint8_t *const volatile *)(reader + 4u);
-    if (!impl)
-        return 0.0f;
-    grid = *(const uint8_t *const volatile *)(impl + 0x69cu);
-    if (!grid || !*(const volatile uint32_t *)(grid + 0x24u))
-        return 0.0f;
-    beats = *(const uint8_t *const volatile *)(grid + 0x34u);
-    if (!beats)
-        return 0.0f;
-    bpm = *(const volatile uint16_t *)(beats + 2u);
-    return bpm ? 6000000.0f / (float)bpm : 0.0f;
+    return *(const int *)(manager + 0x4cu) == BEAT_FX_HELIX &&
+           *(const int *)(manager + 0x50u) == BEAT_FX_HELIX &&
+           *(const int *)manager == *(const int *)(manager + 0x04u);
 }
 
 static float sc_block_peak_l2(const Float2 *buf, int frames)
@@ -90,87 +82,91 @@ static float sc_block_peak_l2(const Float2 *buf, int frames)
     return sc_log2(peak);
 }
 
-static void sc_process(unsigned input, const uint8_t *effect, Float2 *buf,
-                       int frames)
+/* moves the deck's gain toward target and ramps it across the block so a
+   gain change never clicks. */
+static void sc_apply_gain(struct sc_deck *self, float target, float release,
+                          Float2 *buf, int frames)
 {
-    struct sc_channel *self = &sc_channels[input];
-    struct sc_channel *other = &sc_channels[input ^ 1u];
-    struct sc_role role = sc_role_for_knob(*(const float *)(effect + 0x1cu));
-    float parameter = *(const float *)(effect + 0x20u);
-    float target = 1.0f;
     float start = self->gain;
     float step;
-    float release;
     int index;
-    if (parameter != self->last_parameter) {
-        if (self->last_parameter >= 0.0f)
-            sc_parameter = parameter;
-        self->last_parameter = parameter;
-    }
-    self->level_l2 = sc_block_peak_l2(buf, frames);
-    self->threshold_l2 = role.threshold_l2;
-    self->role = role.role;
-    if (role.role == SC_ROLE_COMPRESSED && other->role == SC_ROLE_SOURCE)
-        target = sc_exp2(sc_gain_l2(other->level_l2, other->threshold_l2,
-                                    role.ratio));
-    release = sc_release_ms(sc_deck_beat_ms(input ^ 1u), sc_parameter);
     self->gain = target +
                  (start - target) *
                      sc_block_keep(target < start ? sc_attack_ms(release)
                                                   : release,
                                    frames);
-    if (role.role == SC_ROLE_SOURCE)
-        sc_meter_note_source(self->level_l2, role.threshold_l2);
-    else if (role.role == SC_ROLE_COMPRESSED)
-        sc_meter_note_cut(self->gain);
+    if (self->gain > 0.9999f)
+        self->gain = 1.0f;
     if (start == 1.0f && self->gain == 1.0f)
         return;
-    /* ramp across the block so a gain change never clicks. */
     step = (self->gain - start) / (float)frames;
     for (index = 0; index < frames; index++) {
         float gain = start + step * (float)(index + 1);
         buf[index].left *= gain;
         buf[index].right *= gain;
     }
-    if (self->gain > 0.9999f)
-        self->gain = 1.0f;
 }
 
-static void hooked_color_fx_operate(void *manager, Float2 *buf, int frames)
+static void sidechain_feature_channel_block(unsigned int deck, void *channel,
+                                            Float2 *output, int frames)
 {
-    const uint8_t *fields = (const uint8_t *)manager;
-    const uint8_t *channel = *(const uint8_t *const *)(fields + 0x84u);
-    const uint8_t *effect = *(const uint8_t *const *)fields;
-    unsigned input = channel ? *(const uint32_t *)(channel + 0x14u) : 2u;
-    if (input >= 2u || !effect || !buf || frames <= 0 ||
-        *(const int *)(fields + 0x24u) != COLOR_FX_DUB_ECHO) {
-        if (input < 2u) {
-            sc_channels[input].role = SC_ROLE_OFF;
-            sc_channels[input].gain = 1.0f;
-        }
-        original_color_fx_operate(manager, buf, frames);
+    struct sc_deck *self = &sc_decks[deck];
+    const uint8_t *manager =
+        *(const uint8_t *const *)((const uint8_t *)channel + 0x218u);
+    const uint8_t *effect;
+    unsigned trigger;
+    float threshold;
+    float release;
+    self->level_l2 = sc_block_peak_l2(output, frames);
+    effect = manager ? *(const uint8_t *const *)(manager + 0x08u) : 0;
+    trigger = manager ? *(const uint32_t *)manager : 2u;
+    if (!effect || trigger >= 2u || !sc_helix_settled(manager) ||
+        !*(const uint8_t *)(effect + 0x3cu)) {
+        sc_apply_gain(self, 1.0f, 50.0f, output, frames);
         return;
     }
     if (!sc_logged) {
         sc_logged = 1;
-        log_line("sidechain: DUB ECHO is now the sidechain compressor");
+        log_line("sidechain: HELIX is now the sidechain compressor");
     }
+    threshold = sc_threshold_l2(*(const float *)(manager + 0xe8u));
+    release = sc_release_ms(*(const uint32_t *)(effect + 0x24u));
     sc_meter_note_block();
-    sc_process(input, effect, buf, frames);
+    if (deck == trigger) {
+        sc_meter_note_source(self->level_l2, threshold);
+        sc_apply_gain(self, 1.0f, release, output, frames);
+        return;
+    }
+    sc_apply_gain(self,
+                  sc_exp2(sc_gain_l2(sc_decks[trigger].level_l2, threshold,
+                                     sc_ratios[sc_ratio_index])),
+                  release, output, frames);
+    sc_meter_note_cut(self->gain);
 }
 
-static int sidechain_feature_configured(void)
+/* helix stays dry: its wet path is skipped while it is the settled effect.
+   a switch to or from helix still runs stock, so rbp's crossfade happens. */
+static void hooked_operate_beat_effect(void *manager, Float2 *buf, int frames,
+                                       int preview)
 {
-    const char *flag = getenv("RX3_SIDECHAIN");
-    return flag && flag[0] == '1';
+    if (manager && sc_helix_settled((const uint8_t *)manager))
+        return;
+    original_operate_beat_effect(manager, buf, frames, preview);
 }
 
-static int sidechain_feature_install(void)
+/* the BEAT arrows pick the ratio while helix is the selected beat fx. */
+static int hooked_beat_fx_beat_event(void *innards, long delta)
 {
-    original_color_fx_operate = (color_fx_operate_fn)install_hook(
-        &color_fx_operate_hook, COLOR_FX_OPERATE, color_fx_operate_guard,
-        (void *)hooked_color_fx_operate);
-    return original_color_fx_operate != 0;
+    long index;
+    if (*(const int *)((const uint8_t *)innards + 0x3cu) != BEAT_FX_UI_HELIX)
+        return original_beat_fx_beat_event(innards, delta);
+    index = (long)sc_ratio_index + delta;
+    if (index < 0)
+        index = 0;
+    if (index >= (long)SC_RATIO_COUNT)
+        index = (long)SC_RATIO_COUNT - 1;
+    sc_ratio_index = (unsigned)index;
+    return 0;
 }
 
 /* driven from rbp's image draws, which run on its ui thread. */
@@ -185,11 +181,30 @@ static void sidechain_feature_after_image(void *render, void *image,
     sc_meter_tick();
 }
 
+static int sidechain_feature_configured(void)
+{
+    const char *flag = getenv("RX3_SIDECHAIN");
+    return flag && flag[0] == '1';
+}
+
+static int sidechain_feature_install(void)
+{
+    original_operate_beat_effect = (operate_beat_effect_fn)install_hook(
+        &operate_beat_effect_hook, OPERATE_BEAT_EFFECT,
+        operate_beat_effect_guard, (void *)hooked_operate_beat_effect);
+    original_beat_fx_beat_event = (beat_fx_beat_event_fn)install_hook(
+        &beat_fx_beat_event_hook, BEAT_FX_BEAT_EVENT, beat_fx_beat_event_guard,
+        (void *)hooked_beat_fx_beat_event);
+    return original_operate_beat_effect && original_beat_fx_beat_event;
+}
+
 static void sidechain_feature_remove(void)
 {
-    uninstall_hook(&color_fx_operate_hook);
+    uninstall_hook(&beat_fx_beat_event_hook);
+    uninstall_hook(&operate_beat_effect_hook);
+    original_beat_fx_beat_event = 0;
+    original_operate_beat_effect = 0;
     rx3_gr_close(&sc_meter_window);
-    original_color_fx_operate = 0;
 }
 
 #endif /* RX3_SIDECHAIN_FEATURE_H */

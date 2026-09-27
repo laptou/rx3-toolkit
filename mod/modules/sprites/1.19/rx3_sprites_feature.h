@@ -23,6 +23,14 @@
 #define SPRITE_BASE_HEIGHT ((WAVE_STRIP * 9) / 10)
 /* the loudest pulse grows the sprite by this many thousandths. */
 #define SPRITE_PULSE_MILLI 300u
+/* one-pole low-pass coefficient for about 150 hz at 44.1 khz, applied
+   twice, so the pulse follows the kick drum. */
+#define SPRITE_BASS_POLE 0.0211f
+/* the envelope falls to 1/e over this many samples, about 120 ms. */
+#define SPRITE_FALL_SAMPLES 5292.0f
+/* bass envelope (linear) that starts and fills the pulse. */
+#define SPRITE_PULSE_FLOOR 0.06f
+#define SPRITE_PULSE_FULL 0.7f
 #define SPRITE_FRAME_MS 33u
 #define SPRITE_RETRY_MS 1000u
 
@@ -127,9 +135,16 @@ static struct sprite_deck sprite_decks[2];
 static struct sprite_job *volatile sprite_jobs[2];
 static struct sprite_window sprite_window = { { 0, 0, 0, 0, 0 }, -1, 0, 0, 0 };
 static unsigned sprite_lead;
-/* 0..1000, the low-passed audio level that swells the sprite. */
-static volatile unsigned sprite_pulse_milli;
 static int sprite_pulse_on;
+
+/* each deck's bass envelope, written by the audio thread. */
+struct sprite_bass {
+    float first;
+    float second;
+    volatile float envelope;
+};
+
+static struct sprite_bass sprite_bass[2];
 static unsigned sprite_tick_ms;
 static unsigned sprite_logged;
 
@@ -694,8 +709,22 @@ static int sprite_deck_showable(unsigned deck)
     return state->live && state->pixels && rx3_wave_deck_loaded(deck);
 }
 
-/* the deck the one sprite follows: a playing deck over a stopped one, and
-   the current lead while it still qualifies, so it does not flicker. */
+/* 0..SPRITE_PULSE_MILLI from both decks' bass, squared so kicks jump out. */
+static unsigned sprite_pulse_now(void)
+{
+    float level = sprite_bass[0].envelope + sprite_bass[1].envelope;
+    float share = (level - SPRITE_PULSE_FLOOR) /
+                  (SPRITE_PULSE_FULL - SPRITE_PULSE_FLOOR);
+    if (!(share > 0.0f))
+        return 0u;
+    if (share > 1.0f)
+        share = 1.0f;
+    return (unsigned)(share * share * (float)SPRITE_PULSE_MILLI);
+}
+
+/* the deck the one sprite follows: a playing deck over a stopped one, the
+   louder of two playing decks once it is twice as loud, and otherwise the
+   current lead, so it does not flicker. */
 static int sprite_pick_lead(void)
 {
     unsigned deck;
@@ -711,7 +740,9 @@ static int sprite_pick_lead(void)
         if (!sprite_deck_showable(candidate))
             continue;
         if (best < 0 || (sprite_decks[candidate].playing &&
-                         !sprite_decks[best].playing))
+                         (!sprite_decks[best].playing ||
+                          sprite_bass[candidate].envelope >
+                              2.0f * sprite_bass[best].envelope)))
             best = (int)candidate;
     }
     return best;
@@ -754,7 +785,7 @@ static void sprite_update(int screen_up, unsigned now)
         window->shown = -1;
         sprite_note(4u, "sprite window open");
     }
-    sprite_size(state, sprite_pulse_on ? sprite_pulse_milli : 0u, &wide, &tall);
+    sprite_size(state, sprite_pulse_on ? sprite_pulse_now() : 0u, &wide, &tall);
     if (wide > box_wide)
         wide = box_wide;
     if (tall > box_tall)
@@ -800,6 +831,37 @@ static void sprites_feature_playhead(unsigned int deck, long position)
     }
     sprite_decks[deck].phase_milli = phase;
     sprite_decks[deck].have_phase = 1;
+}
+
+/* audio thread: the deck's post-fader block through a two-pole bass
+   filter into an envelope that jumps up at once and falls over ~120 ms. */
+static void sprites_feature_channel_block(unsigned int deck, void *channel,
+                                          Float2 *output, int frames)
+{
+    struct sprite_bass *bass = &sprite_bass[deck];
+    float first = bass->first;
+    float second = bass->second;
+    float peak = 0.0f;
+    float envelope = bass->envelope;
+    float fall;
+    int index;
+    (void)channel;
+    for (index = 0; index < frames; index++) {
+        float mono = 0.5f * (output[index].left + output[index].right);
+        first += SPRITE_BASS_POLE * (mono - first);
+        second += SPRITE_BASS_POLE * (first - second);
+        if (second > peak)
+            peak = second;
+        else if (-second > peak)
+            peak = -second;
+    }
+    bass->first = first;
+    bass->second = second;
+    /* 1 - frames / fall samples, close enough to exp for blocks of a few
+       hundred frames. */
+    fall = 1.0f - (float)frames / SPRITE_FALL_SAMPLES;
+    envelope = fall > 0.0f ? envelope * fall : 0.0f;
+    bass->envelope = peak > envelope ? peak : envelope;
 }
 
 static long sprites_timestretch_operate(void *stretch, long position,

@@ -36,19 +36,31 @@ require(
 )
 
 require(
-    "#define COLOR_FX_OPERATE ((unsigned long)0x000bbc68)" in FEATURE
-    and "0xf8, 0x45, 0x2d, 0xe9, 0x02, 0x8b, 0x2d, 0xed" in FEATURE,
-    "the hook sits on SoundColorFxManager::operate, guarded by its stmdb/vpush prologue",
+    "#define OPERATE_BEAT_EFFECT ((unsigned long)0x0008a52c)" in FEATURE
+    and "0xf8, 0x45, 0x2d, 0xe9, 0x01, 0x60, 0xa0, 0xe1" in FEATURE
+    and "#define BEAT_FX_BEAT_EVENT ((unsigned long)0x0034553c)" in FEATURE
+    and "0xe9, 0x30, 0xd0, 0xe5, 0xf0, 0x41, 0x2d, 0xe9" in FEATURE,
+    "the hooks sit on BeatEffectManager::operateBeatEffect and "
+    "MasterInnards::onEv_BeatFxBeat, guarded by their prologues",
 )
 require(
-    "#define COLOR_FX_DUB_ECHO 4" in FEATURE
-    and "*(const int *)(fields + 0x24u) != COLOR_FX_DUB_ECHO" in FEATURE,
-    "only the desired DUB ECHO type (manager +0x24 == 4) is replaced; every "
-    "other color fx must run stock",
+    "#define BEAT_FX_HELIX 14" in FEATURE
+    and "#define BEAT_FX_UI_HELIX 4" in FEATURE
+    and "*(const int *)(manager + 0x4cu) == BEAT_FX_HELIX" in FEATURE
+    and "*(const int *)(manager + 0x50u) == BEAT_FX_HELIX" in FEATURE,
+    "helix is engine type 14 and ui type 4; only a settled helix is replaced, "
+    "so a switch to or from it keeps rbp's crossfade",
 )
 require(
-    "(fields + 0x84u)" in FEATURE and "(channel + 0x14u)" in FEATURE,
-    "the channel comes from the manager's MixerChannel back-pointer, not a guess",
+    "(manager + 0xe8u)" in FEATURE and "(effect + 0x24u)" in FEATURE
+    and "(effect + 0x3cu)" in FEATURE,
+    "DEPTH comes from the manager's pending value, because the skipped "
+    "operateBeatEffect is what copies it onto the effect; TIME and ON are "
+    "the effect's own",
+)
+require(
+    "color_fx" not in FEATURE.lower() and "COLOR_FX" not in FEATURE,
+    "DUB ECHO belongs to the band-pass module now",
 )
 require(
     "#include <math.h>" not in FEATURE
@@ -62,14 +74,14 @@ require(
     "the meter header must be part of the module's build inputs",
 )
 require(
-    "sidechain_feature_after_image\n" in HOOK
+    "sidechain_feature_after_image, sidechain_feature_channel_block" in HOOK
     and "sc_meter_tick();" in FEATURE,
     "the meter is drawn from rbp's ui thread through the after_image slot, "
     "never from the audio thread",
 )
 require(
-    "rx3_gr_" not in FEATURE.split("static void sc_process")[1].split(
-        "static int sidechain_feature_configured")[0],
+    "rx3_gr_" not in FEATURE.split("static float sc_block_peak_l2")[1].split(
+        "static void sidechain_feature_after_image")[0],
     "the audio path may only fold levels into the meter; ds_gr calls lock "
     "the compositor and belong on the ui thread",
 )

@@ -366,11 +366,18 @@ static void sidechain_feature_remove(void);
 static void sidechain_feature_after_image(void *render, void *image,
                                           uint16_t window_layer,
                                           uint32_t image_id);
+static int bandpass_feature_configured(void);
+static int bandpass_feature_install(void);
+static void bandpass_feature_remove(void);
+static void sprites_feature_channel_block(unsigned int deck, void *channel,
+                                          Float2 *output, int frames);
+static void sidechain_feature_channel_block(unsigned int deck, void *channel,
+                                            Float2 *output, int frames);
 static void rx3_notify_playhead(unsigned int deck, long position);
 static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
 
-#define RUNTIME_FEATURE_COUNT 4u
+#define RUNTIME_FEATURE_COUNT 5u
 
 static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
@@ -378,26 +385,33 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         keyshift_feature_configured, keyshift_feature_install,
         keyshift_feature_remove, 0, keyshift_feature_track_did_load,
         rx3_keyshift_start_audio, rx3_keyshift_report,
-        rx3_keyshift_destroy_deck, 0, 0
+        rx3_keyshift_destroy_deck, 0, 0, 0
     },
     {
         "stems", 0, &stems_panel,
         stems_feature_configured, stems_feature_install,
         stems_feature_remove, stems_feature_track_will_load,
-        stems_feature_track_did_load, 0, 0, stems_feature_destroy_deck, 0, 0
+        stems_feature_track_did_load, 0, 0, stems_feature_destroy_deck, 0, 0,
+        0
     },
     {
         "sprites", 0, 0,
         sprites_feature_configured, sprites_feature_install,
         sprites_feature_remove, sprites_feature_track_will_load,
         sprites_feature_track_did_load, 0, 0, sprites_feature_destroy_deck,
-        sprites_feature_playhead, sprites_feature_after_image
+        sprites_feature_playhead, sprites_feature_after_image,
+        sprites_feature_channel_block
     },
     {
         "sidechain", 0, 0,
         sidechain_feature_configured, sidechain_feature_install,
         sidechain_feature_remove, 0, 0, 0, 0, 0, 0,
-        sidechain_feature_after_image
+        sidechain_feature_after_image, sidechain_feature_channel_block
+    },
+    {
+        "bandpass", 0, 0,
+        bandpass_feature_configured, bandpass_feature_install,
+        bandpass_feature_remove, 0, 0, 0, 0, 0, 0, 0, 0
     }
 };
 
@@ -2081,6 +2095,59 @@ static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
             runtime_features[index].after_image(render, image, window_layer, image_id);
 }
 
+/* the channel tap: MixerChannel::updateFilter(channel, frames) runs every
+   block for each deck and leaves the post-fader output at channel +0x20,
+   which the master then sums. +0x210 is the deck the beat fx channel
+   selector compares against (0 or 1; aux and mic are other values). */
+#define MIXER_CHANNEL_UPDATE_FILTER ((unsigned long)0x0009e3fc)
+
+typedef void (*update_filter_fn)(void *, int);
+
+/* stmdb sp!,{r4-r8,lr} ; mov r4,r0 */
+static const uint8_t update_filter_guard[8] = {
+    0xf0, 0x41, 0x2d, 0xe9, 0x00, 0x40, 0xa0, 0xe1
+};
+
+static struct installed_hook update_filter_hook;
+static update_filter_fn original_update_filter;
+
+static void hooked_update_filter(void *channel, int frames)
+{
+    unsigned int deck;
+    Float2 *output;
+    unsigned int index;
+    original_update_filter(channel, frames);
+    deck = *(const uint32_t *)((const uint8_t *)channel + 0x210u);
+    output = *(Float2 **)((uint8_t *)channel + 0x20u);
+    if (deck >= 2u || !output || frames <= 0)
+        return;
+    for (index = 0; index < RUNTIME_FEATURE_COUNT; index++)
+        if (runtime_features[index].active && runtime_features[index].channel_block)
+            runtime_features[index].channel_block(deck, channel, output, frames);
+}
+
+/* installed once, and only when an active feature listens. */
+static void install_channel_tap(void)
+{
+    unsigned int index;
+    for (index = 0; index < RUNTIME_FEATURE_COUNT; index++)
+        if (runtime_features[index].active && runtime_features[index].channel_block)
+            break;
+    if (index == RUNTIME_FEATURE_COUNT || original_update_filter)
+        return;
+    original_update_filter = (update_filter_fn)install_hook(
+        &update_filter_hook, MIXER_CHANNEL_UPDATE_FILTER, update_filter_guard,
+        (void *)hooked_update_filter);
+    if (!original_update_filter)
+        log_line("warning: channel tap guard rejected, deck audio features stay quiet");
+}
+
+static void remove_channel_tap(void)
+{
+    uninstall_hook(&update_filter_hook);
+    original_update_filter = 0;
+}
+
 #include "../../keyshift/1.19/rx3_keyshift.h"
 
 /* Shared hook replacement. Feature-specific hooks are composed below. */
@@ -2089,6 +2156,7 @@ static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
 #define RX3_HOOK_TYPES 1
 #include "../../sprites/1.19/rx3_sprites_feature.h"
 #include "../../sidechain/1.19/rx3_sidechain_feature.h"
+#include "../../bandpass/1.19/rx3_bandpass_feature.h"
 
 static int hooked_load(void *reader, const void *track_info)
 {
@@ -2147,11 +2215,13 @@ static unsigned int install_features(void)
             feature->remove();
         feature->active = 0;
     }
+    install_channel_tap();
     return active;
 }
 
 static void remove_features(void)
 {
+    remove_channel_tap();
     for (unsigned int i = RUNTIME_FEATURE_COUNT; i > 0u; i--) {
         struct rx3_runtime_feature *feature = &runtime_features[i - 1u];
         if (feature->remove)
