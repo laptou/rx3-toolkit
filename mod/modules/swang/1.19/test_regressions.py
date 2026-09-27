@@ -81,6 +81,14 @@ require(
     "the ring holds a quarter of a two-beat pair at 40 bpm plus a grain",
 )
 require(
+    "#define SW_GRAIN_SLOW 512u" in DSP
+    and "#define SW_GRAIN_FAST 2048u" in DSP
+    and "best_score" in DSP
+    and "SW_ALIGN_MAX 768" in DSP,
+    "the slowed note uses a 512-frame grain and the sped-up note a 2048-frame "
+    "grain, and a restart searches ±768 frames for a matching phase",
+)
+require(
     "#include <math.h>" not in FEATURE and "#include <math.h>" not in DSP
     and "%" not in FEATURE.split("static int swang_feature_beat_fx_time")[1]
     .split("static void swang_feature_beat_fx_info")[0],

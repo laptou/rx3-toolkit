@@ -48,6 +48,39 @@ static void run(struct sw_state *state, struct sw_stereo *buf, float swing)
     }
 }
 
+/* share of energy, after the first pair, that still sits within ±20 hz of
+   440. a comb throws the tone into sidebands; a locked splice does not. */
+static double purity(const struct sw_stereo *buf, int from, int to)
+{
+    int n = to - from;
+    int k0 = (int)(420.0 * (double)n / 44100.0 + 0.5);
+    int k1 = (int)(460.0 * (double)n / 44100.0 + 0.5);
+    int k;
+    int i;
+    double energy = 0.0;
+    double band = 0.0;
+    for (i = 0; i < n; i++) {
+        double sample = buf[from + i].left;
+        energy += sample * sample;
+    }
+    for (k = k0; k <= k1; k++) {
+        double angular = 2.0 * 3.141592653589793 * (double)k / (double)n;
+        double coeff = 2.0 * cos(angular);
+        double s1 = 0.0;
+        double s2 = 0.0;
+        double power;
+        for (i = 0; i < n; i++) {
+            double next = buf[from + i].left + coeff * s1 - s2;
+            s2 = s1;
+            s1 = next;
+        }
+        power = s2 * s2 + s1 * s1 - coeff * s1 * s2;
+        /* the matching negative-frequency bin holds the other half. */
+        band += 2.0 * power;
+    }
+    return energy > 0.0 ? band / ((double)n * energy) : 0.0;
+}
+
 int main(void)
 {
     static struct sw_state state;
@@ -70,6 +103,12 @@ int main(void)
     if (!near(sw_swing_for(0.0f), 0.5f, 0.0f, "depth 0") ||
         !near(sw_swing_for(1.0f), 0.75f, 0.0f, "depth 1"))
         return 3;
+    if (!near(sw_rate_at(0.3f, 2.0f / 3.0f), 0.75f, 1e-5f, "triplet slow") ||
+        !near(sw_rate_at(0.8f, 2.0f / 3.0f), 1.5f, 1e-5f, "triplet fast") ||
+        !near(sw_rate_at(0.3f, SW_HARDEST), 2.0f / 3.0f, 1e-5f, "hard slow") ||
+        !near(sw_rate_at(0.9f, SW_HARDEST), 2.0f, 1e-5f, "hard fast") ||
+        !near(sw_rate_at(0.3f, SW_STRAIGHT), 1.0f, 0.0f, "straight rate"))
+        return 6;
 
     /* straight swing is the input, sample for sample. */
     for (index = 0; index < TOTAL; index++) {
@@ -97,7 +136,29 @@ int main(void)
             !near(off, swing * PAIR + 16.0f, 150.0f, "off-beat"))
             return 5;
     }
+
+    /* 440 hz through the warp. drop the first pair, while the grains fill. */
+    {
+        double triplet;
+        double hard;
+        double step = 2.0 * 3.141592653589793 * 440.0 / 44100.0;
+        for (index = 0; index < TOTAL; index++) {
+            buf[index].left = buf[index].right = sin(step * (double)index);
+        }
+        run(&state, buf, swing);
+        triplet = purity(buf, PAIR, TOTAL);
+        for (index = 0; index < TOTAL; index++) {
+            buf[index].left = buf[index].right = sin(step * (double)index);
+        }
+        run(&state, buf, SW_HARDEST);
+        hard = purity(buf, PAIR, TOTAL);
+        if (triplet < 0.90 || hard < 0.90) {
+            printf("purity %.3f %.3f, below 0.90\n", triplet, hard);
+            free(buf);
+            return 7;
+        }
+        printf("swang dsp: ok (purity %.3f %.3f)\n", triplet, hard);
+    }
     free(buf);
-    puts("swang dsp: ok");
     return 0;
 }

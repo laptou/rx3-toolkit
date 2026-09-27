@@ -3,8 +3,10 @@
 
 With this module on, the SPIRAL Beat FX is renamed SWANG. It swings the music:
 it slows the first note of each pair and speeds up the second, so the
-off-beat lands late. It stretches time in short overlapping grains, so the
-pitch does not change.
+off-beat lands late. The pitch stays put because each grain plays at normal
+speed. The slowed note uses short grains so drums are not replayed, the sped-up
+note uses long grains so the tone is not chopped, and each new grain starts in
+phase with the one fading out.
 
 The swing locks to the beat grid of the tempo MASTER deck. With no MASTER deck
 it uses the deck on the Beat FX channel. With neither, or while that deck is
