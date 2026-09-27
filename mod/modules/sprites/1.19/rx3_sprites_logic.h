@@ -13,13 +13,7 @@
 typedef int int32_t;
 #endif
 
-#define RX3_SPRITE_SAMPLE_RATE 44100u
 #define RX3_SPRITE_NAME_LIMIT 44u
-
-struct rx3_tempo_segment {
-    int32_t start_samples;
-    uint32_t bpm_x1000;
-};
 
 static uint32_t rx3_sprite_checksum(const uint8_t *data, size_t length)
 {
@@ -116,46 +110,19 @@ static unsigned rx3_sprite_fps_frame(uint32_t elapsed_ms, unsigned fps_num,
                       frame_count);
 }
 
-static int rx3_sprite_beat_frame(int32_t position,
-                                const struct rx3_tempo_segment *segments,
-                                unsigned count, unsigned frame_count,
-                                unsigned beats_per_loop, unsigned *frame_out)
+/* phase_milli is beats from the grid origin, times 1000.
+ * a missing clock returns -1 so the caller draws nothing. */
+static int rx3_sprite_phase_frame(int have_phase, uint32_t phase_milli,
+                                 unsigned frames_per_beat,
+                                 unsigned beats_per_loop,
+                                 unsigned frame_count, unsigned *frame_out)
 {
-    unsigned index;
-    uint64_t beats_x1000;
-    if (!segments || !count || !frame_count || !beats_per_loop || !frame_out)
+    uint64_t ticks;
+    if (!have_phase || !frame_out || !frame_count || !frames_per_beat ||
+        !beats_per_loop)
         return -1;
-    if (position < segments[0].start_samples) {
-        *frame_out = 0;
-        return 0;
-    }
-    index = 0;
-    for (unsigned cursor = 0; cursor < count; cursor++) {
-        if (segments[cursor].start_samples <= position)
-            index = cursor;
-        else
-            break;
-    }
-    if (index + 1u < count) {
-        int32_t span = segments[index + 1u].start_samples -
-                       segments[index].start_samples;
-        int32_t into = position - segments[index].start_samples;
-        if (span <= 0)
-            return -1;
-        if (into > span)
-            into = span;
-        beats_x1000 = (uint64_t)index * 1000u +
-                      (uint64_t)into * 1000u / (uint64_t)span;
-    } else {
-        int32_t delta = position - segments[index].start_samples;
-        if (delta < 0)
-            delta = 0;
-        beats_x1000 = (uint64_t)index * 1000u +
-                      (uint64_t)delta * segments[index].bpm_x1000 /
-                      (RX3_SPRITE_SAMPLE_RATE * 60u);
-    }
-    *frame_out = (unsigned)((beats_x1000 * frame_count / beats_per_loop / 1000u) %
-                            frame_count);
+    ticks = (uint64_t)phase_milli * frames_per_beat / beats_per_loop / 1000u;
+    *frame_out = (unsigned)(ticks % frame_count);
     return 0;
 }
 

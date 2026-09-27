@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Compile sprite packs and write an RX3_SPRITES directory."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import pathlib
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+
+from tools.rx3_sprites.fixture import proof_8
+from tools.rx3_sprites.log import configure
+from tools.rx3_sprites.proof import ProofError, parse_format
+from tools.rx3_sprites.provision import ProvisionError, provision
+from tools.rx3_sprites.source import SourceError, compile_source, load_source
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name, help_text in (
+        ("preview", "compile in memory and log the summary"),
+        ("write", "compile and write RX3_SPRITES"),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--source", required=True, type=pathlib.Path)
+        if name == "write":
+            command.add_argument("--dest", required=True, type=pathlib.Path)
+        command.add_argument("--format-proof", type=pathlib.Path)
+        command.add_argument("--anchors", type=pathlib.Path)
+        command.add_argument("-v", "--verbose", action="count", default=0)
+        command.add_argument("-q", "--quiet", action="count", default=0)
+        command.add_argument(
+            "--log-level", choices=("debug", "info", "warning", "error")
+        )
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exit_error:
+        code = exit_error.code
+        return code if isinstance(code, int) else 2
+    configure(_level(args))
+    try:
+        format_text, default_format = _format_text(args.format_proof)
+        anchors = "" if args.anchors is None else args.anchors.read_text(encoding="utf-8")
+        if args.command == "preview":
+            proof = parse_format(format_text)
+            loaded = load_source(args.source)
+            pack = compile_source(loaded, proof)
+            mode = "fixed rate" if pack.mode == 1 else "beat clock"
+            logging.getLogger("rx3.sprites").info(
+                "%s: %sx%s, %s frames, %s, palette %s bytes",
+                pack.name, pack.width, pack.height, pack.frame_count, mode, len(pack.palette),
+            )
+            return 0
+        provision(
+            args.source, args.dest, format_text, anchors, format_is_default=default_format,
+        )
+    except (OSError, SourceError, ProofError, ProvisionError) as error:
+        logging.getLogger("rx3.sprites").error("%s", error)
+        return 2
+    return 0
+
+
+def _level(args: argparse.Namespace) -> int:
+    if args.log_level:
+        return getattr(logging, args.log_level.upper())
+    if args.quiet >= 2:
+        return logging.CRITICAL
+    if args.quiet == 1:
+        return logging.ERROR
+    if args.verbose >= 2:
+        return logging.DEBUG
+    if args.verbose == 1:
+        return logging.INFO
+    return logging.WARNING
+
+
+def _format_text(path: pathlib.Path | None) -> tuple[str, bool]:
+    if path is None:
+        return proof_8().text(), True
+    return path.read_text(encoding="utf-8"), False
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

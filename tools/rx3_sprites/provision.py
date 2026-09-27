@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Write an RX3_SPRITES directory without touching Rekordbox media."""
+"""Write an RX3_SPRITES directory without reading Rekordbox analysis files."""
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
 
-from tools.rx3_sprites.beatgrid import TrackGrid, grids_from_tree
-from tools.rx3_sprites.index import encode_index
 from tools.rx3_sprites.pack import Pack, encode
+from tools.rx3_sprites.proof import parse_anchors, parse_format
+from tools.rx3_sprites.source import compile_source, load_source
+
+
+log = logging.getLogger("rx3.sprites")
 
 
 class ProvisionError(ValueError):
@@ -19,7 +23,6 @@ class ProvisionError(ValueError):
 def write_tree(
     destination: Path,
     packs: list[tuple[str, Pack]],
-    grids: tuple[TrackGrid, ...] = (),
     format_proof: str | None = None,
     anchor_proof: str | None = None,
 ) -> Path:
@@ -39,16 +42,22 @@ def write_tree(
     parent = destination
     parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".rx3-sprites-", dir=parent))
+    written_bytes = 0
     try:
         catalog = "".join(f"{name}\n" for name in sorted(names))
         _write(temporary / "catalog.txt", catalog.encode("utf-8"))
-        _write(temporary / "tracks.rx3idx", encode_index(grids))
+        log.debug("catalog.txt")
         if format_proof is not None:
             _write(temporary / "format.proof", format_proof.encode("utf-8"))
+            log.debug("format.proof")
         if anchor_proof is not None:
             _write(temporary / "anchors.proof", anchor_proof.encode("utf-8"))
+            log.debug("anchors.proof")
         for name, pack in packs:
-            _write(temporary / name, encode(pack))
+            blob = encode(pack)
+            _write(temporary / name, blob)
+            log.debug("%s", name)
+            written_bytes += len(blob)
         if root.exists():
             retired = Path(tempfile.mkdtemp(prefix=".rx3-sprites-old-", dir=parent))
             os.replace(root, retired / "old")
@@ -59,13 +68,43 @@ def write_tree(
     except Exception:
         _remove_tree(temporary)
         raise
+    log.info("wrote %s (%s bytes)", root, written_bytes)
     return root
 
 
-def scan_grids(usb_root: Path) -> tuple[TrackGrid, ...]:
-    if not usb_root.is_dir():
-        raise ProvisionError("Rekordbox USB root is not a directory")
-    return grids_from_tree(usb_root)
+def provision(
+    source: Path,
+    destination: Path,
+    format_text: str,
+    anchor_text: str,
+    *,
+    format_is_default: bool = False,
+) -> str:
+    """Compile one source folder and write RX3_SPRITES. No analysis scan."""
+    from tools.rx3_sprites.capacity import directory_bytes, report
+
+    proof = parse_format(format_text)
+    anchors = anchor_text.strip()
+    if format_is_default:
+        log.warning("format proof is the unproven placeholder")
+    if anchors:
+        parse_anchors(anchors if anchors.endswith("\n") else anchors + "\n")
+    else:
+        log.warning("no anchor proof; the player will load the pack and draw nothing")
+    loaded = load_source(source)
+    pack = compile_source(loaded, proof)
+    root = write_tree(
+        destination,
+        [(f"{pack.name}.rx3spr", pack)],
+        format_proof=proof.text(),
+        anchor_proof=(
+            None if not anchors
+            else anchors if anchors.endswith("\n") else anchors + "\n"
+        ),
+    )
+    sprite_bytes = (root / f"{pack.name}.rx3spr").stat().st_size
+    stem_bytes = directory_bytes(destination / "RX3_STEMS", ".rx3stem")
+    return report(sprite_bytes, stem_bytes)
 
 
 def _safe_name(name: str) -> bool:

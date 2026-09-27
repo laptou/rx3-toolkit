@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from tools.rx3_sprites.select import choose
-from tools.rx3_sprites.timing import Segment, beat_frame, fps_frame
+from tools.rx3_sprites.timing import fps_frame, phase_frame
 from tools.rx3_stems.rekordbox import export_stem
 
 
@@ -34,11 +34,10 @@ class SpriteLogicTests(unittest.TestCase):
         lines = dict(line.split(" ", 1) for line in ran.stdout.splitlines() if " " in line)
         self.assertEqual(lines["stem"], export_stem("Artist - Title"))
         self.assertEqual(int(lines["fps"]), fps_frame(500, 10, 1, 4))
-        self.assertEqual(int(lines["beat-one"]), beat_frame(11025, (Segment(0, 120000),), 4, 1))
-        self.assertEqual(
-            int(lines["beat-two"]),
-            beat_frame(44100, (Segment(0, 120000), Segment(22050, 60000)), 4, 1),
-        )
+        self.assertEqual(int(lines["phase-zero"]), phase_frame(0, 1, 1, 4))
+        self.assertEqual(int(lines["phase-seek"]), phase_frame(2500, 1, 1, 4))
+        self.assertIsNone(phase_frame(None, 1, 1, 4))
+        self.assertEqual(lines["phase-missing"], "1")
         names = ["a.rx3spr", "b.rx3spr"]
         first = choose(names, "demo", 0, 1, None)
         self.assertEqual(names[int(lines["pick"])], first)

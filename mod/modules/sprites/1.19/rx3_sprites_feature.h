@@ -13,7 +13,6 @@
 #define SPRITE_ID_COUNT 255u
 #define SPRITE_PROBE_ID 0x1703u
 #define SPRITE_PACK_LIMIT 64u
-#define SPRITE_SEGMENT_LIMIT 4096u
 #define SPRITE_MEMORY_CEILING (2u * 1024u * 1024u)
 #define SPRITE_FILE_LIMIT (1024u * 1024u)
 #define SPRITE_TRACE_LIMIT 96u
@@ -43,19 +42,8 @@ struct __attribute__((packed)) rx3_sprite_file_header {
     uint16_t reserved;
 };
 
-struct __attribute__((packed)) rx3_index_file_header {
-    char magic[8];
-    uint16_t version;
-    uint16_t header_size;
-    uint32_t count;
-    uint32_t checksum;
-    uint8_t pad[12];
-};
-
 _Static_assert(sizeof(struct rx3_sprite_file_header) == 50,
                "sprite header drifted from the host compiler");
-_Static_assert(sizeof(struct rx3_index_file_header) == 32,
-               "beat index header drifted from the host compiler");
 
 struct rx3_format_proof {
     unsigned format_byte;
@@ -87,10 +75,8 @@ struct sprite_job {
     unsigned format_byte;
     unsigned id0;
     unsigned pixel_bytes;
-    unsigned segment_count;
     uint8_t *palette;
     uint8_t *pixels;
-    struct rx3_tempo_segment *segments;
     void *block;
     size_t block_bytes;
     char name[48];
@@ -116,10 +102,8 @@ struct sprite_deck {
     unsigned anchor;
     unsigned id0;
     unsigned epoch_ms;
-    unsigned segment_count;
-    int32_t position;
-    int have_position;
-    struct rx3_tempo_segment *segments;
+    int have_phase;
+    uint32_t phase_milli;
     char name[48];
     char previous[48];
 };
@@ -455,87 +439,24 @@ static int sprite_load_proofs(void)
     return 0;
 }
 
-static int sprite_index_segments(const uint8_t *data, size_t size,
-                                const char *identity,
-                                struct rx3_tempo_segment *segments,
-                                unsigned capacity, unsigned *count_out)
+/* the player beat clock is not wired until a firmware-1.19 log proves the field.
+ * do not guess an address. a failed read leaves beat-mode packs undrawn. */
+static int sprite_read_beat_phase(unsigned deck, uint32_t *phase_milli)
 {
-    struct rx3_index_file_header *header;
-    uint32_t stored;
-    uint32_t digest;
-    size_t cursor;
-    unsigned entry;
-    if (size < sizeof(*header))
-        return -1;
-    header = (struct rx3_index_file_header *)data;
-    if (memcmp(header->magic, "RX3IDX1", 7) || header->magic[7] != 0 ||
-        header->version != 1u || header->header_size != 32u)
-        return -1;
-    stored = header->checksum;
-    header->checksum = 0u;
-    digest = rx3_sprite_checksum(data, size);
-    header->checksum = stored;
-    if (digest != stored)
-        return -1;
-    cursor = sizeof(*header);
-    for (entry = 0; entry < header->count; entry++) {
-        unsigned length;
-        unsigned segments_count;
-        unsigned index;
-        int matched;
-        if (cursor + 2u > size)
-            return -1;
-        length = (unsigned)data[cursor] | ((unsigned)data[cursor + 1u] << 8);
-        cursor += 2u;
-        if (!length || length > 44u || cursor + length + 6u > size)
-            return -1;
-        matched = length == str_length(identity) &&
-                  !memcmp(data + cursor, identity, length);
-        cursor += length;
-        segments_count = (unsigned)data[cursor + 4u] |
-                         ((unsigned)data[cursor + 5u] << 8);
-        cursor += 6u;
-        if (!segments_count || cursor + segments_count * 8u > size)
-            return -1;
-        if (matched) {
-            if (segments_count > capacity)
-                return -1;
-            for (index = 0; index < segments_count; index++) {
-                int32_t start;
-                uint32_t bpm;
-                memcpy(&start, data + cursor, 4u);
-                memcpy(&bpm, data + cursor + 4u, 4u);
-                if (start < 0 || (index && start <= segments[index - 1u].start_samples))
-                    return -1;
-                if (bpm < 10000u || bpm > 400000u)
-                    return -1;
-                segments[index].start_samples = start;
-                segments[index].bpm_x1000 = bpm;
-                cursor += 8u;
-            }
-            *count_out = segments_count;
-            return 0;
-        }
-        cursor += segments_count * 8u;
-    }
-    if (cursor != size)
-        return -1;
-    return 1;
+    (void)deck;
+    (void)phase_milli;
+    return -1;
 }
 
 static int sprite_publish(struct sprite_job *job)
 {
     struct sprite_job *expected = 0;
     if (job->generation != sprite_decks[job->deck].generation) {
-        if (job->segments)
-            munmap(job->segments, sizeof(*job->segments) * SPRITE_SEGMENT_LIMIT);
         munmap(job->block, job->block_bytes);
         munmap(job, 4096u);
         return -1;
     }
     if (!__sync_bool_compare_and_swap(&sprite_jobs[job->deck], expected, job)) {
-        if (job->segments)
-            munmap(job->segments, sizeof(*job->segments) * SPRITE_SEGMENT_LIMIT);
         munmap(job->block, job->block_bytes);
         munmap(job, 4096u);
         return -1;
@@ -556,16 +477,11 @@ static void *sprite_loader(void *opaque)
     unsigned eligible_count = 0;
     unsigned chosen;
     unsigned index;
-    int have_grid = 0;
-    struct rx3_tempo_segment *segments = 0;
-    unsigned segment_count = 0;
     size_t pack_size = 0;
     uint8_t *pack = 0;
     struct rx3_sprite_file_header *header;
     int frame_bytes;
     struct sprite_job *job;
-    size_t index_size = 0;
-    void *index_block = 0;
 
     if (sprite_load_proofs())
         goto done;
@@ -598,21 +514,6 @@ static void *sprite_loader(void *opaque)
             cursor = end + 1u;
         }
     }
-    if (sprite_join(path, sizeof(path), "tracks.rx3idx") == 0)
-        index_block = sprite_slurp(path, &index_size, SPRITE_FILE_LIMIT);
-    if (index_block) {
-        segments = mmap(0, sizeof(*segments) * SPRITE_SEGMENT_LIMIT,
-                        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
-                        -1, 0);
-        if (segments == MAP_FAILED)
-            segments = 0;
-        else if (sprite_index_segments(index_block, index_size, request->stem,
-                                      segments, SPRITE_SEGMENT_LIMIT,
-                                      &segment_count) == 0)
-            have_grid = 1;
-        munmap(index_block, index_size);
-        index_block = 0;
-    }
     for (index = 0; index < count; index++) {
         struct rx3_sprite_file_header *peek_header;
         if (sprite_join(path, sizeof(path), names[index]))
@@ -622,7 +523,7 @@ static void *sprite_loader(void *opaque)
             continue;
         modes[index] = peek_header->mode;
         munmap(peek_header, 64u);
-        if (modes[index] == 1u || (modes[index] == 2u && have_grid))
+        if (modes[index] == 1u || modes[index] == 2u)
             eligible[eligible_count++] = index;
     }
     if (!eligible_count) {
@@ -652,11 +553,6 @@ static void *sprite_loader(void *opaque)
         munmap(pack, pack_size);
         goto release_catalog;
     }
-    if ((modes[chosen] == 2u && !have_grid) ||
-        (modes[chosen] == 1u && have_grid && header->mode != 1u)) {
-        munmap(pack, pack_size);
-        goto release_catalog;
-    }
     job = mmap(0, 4096u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
                -1, 0);
     if (job == MAP_FAILED) {
@@ -683,17 +579,9 @@ static void *sprite_loader(void *opaque)
     job->pixels = job->palette + header->palette_count * header->entry_size;
     if (header->name_length < sizeof(job->name))
         memcpy(job->name, pack + 64u, header->name_length);
-    if (header->mode == 2u && have_grid && segments) {
-        job->segments = segments;
-        job->segment_count = segment_count;
-        segments = 0;
-    }
     if (sprite_publish(job))
         goto release_catalog;
-    segments = 0;
 release_catalog:
-    if (segments)
-        munmap(segments, sizeof(*segments) * SPRITE_SEGMENT_LIMIT);
     if (catalog)
         munmap(catalog, catalog_size);
 done:
@@ -719,9 +607,6 @@ static int sprite_install_job(struct sprite_job *job)
     if (sprite_keep(job->block, job->block_bytes))
         return -1;
     job->block = 0;
-    if (job->segments &&
-        sprite_keep(job->segments, sizeof(*job->segments) * SPRITE_SEGMENT_LIMIT))
-        return -1;
     job->id0 = sprite_next_id;
     for (frame = 0; frame < job->frame_count; frame++) {
         uint8_t *record = table + (job->id0 + frame) * 44u;
@@ -759,8 +644,6 @@ static void sprite_take_jobs(void)
             sprite_log_once(32u, "sprites disabled: image install failed");
             if (job->block)
                 munmap(job->block, job->block_bytes);
-            if (job->segments)
-                munmap(job->segments, sizeof(*job->segments) * SPRITE_SEGMENT_LIMIT);
             munmap(job, 4096u);
             continue;
         }
@@ -776,10 +659,8 @@ static void sprite_take_jobs(void)
         state->anchor = job->anchor;
         state->id0 = job->id0;
         state->epoch_ms = now_ms();
-        state->position = 0;
-        state->have_position = 0;
-        state->segments = job->segments;
-        state->segment_count = job->segment_count;
+        state->have_phase = 0;
+        state->phase_milli = 0;
         memcpy(state->previous, job->name, sizeof(state->previous));
         memcpy(state->name, job->name, sizeof(state->name));
         munmap(job, 4096u);
@@ -1010,11 +891,13 @@ static void sprites_feature_after_image(void *render, void *image,
     if (state->mode == 1u)
         frame = rx3_sprite_fps_frame(now_ms() - state->epoch_ms, state->fps_num,
                                     state->fps_den, state->frame_count);
-    else if (state->have_position && state->segments) {
-        if (rx3_sprite_beat_frame(state->position, state->segments,
-                                 state->segment_count, state->frame_count,
-                                 state->beats_per_loop, &frame))
+    else if (state->mode == 2u) {
+        if (rx3_sprite_phase_frame(state->have_phase, state->phase_milli,
+                                  state->frames_per_beat, state->beats_per_loop,
+                                  state->frame_count, &frame)) {
+            sprite_log_once(128u, "sprites: beat clock unavailable");
             return;
+        }
     } else {
         return;
     }
@@ -1033,10 +916,16 @@ static void sprites_feature_after_image(void *render, void *image,
 
 static void sprites_feature_playhead(unsigned int deck, long position)
 {
+    uint32_t phase = 0;
+    (void)position;
     if (deck >= 2u)
         return;
-    sprite_decks[deck].position = (int32_t)position;
-    sprite_decks[deck].have_position = 1;
+    if (sprite_read_beat_phase(deck, &phase)) {
+        sprite_decks[deck].have_phase = 0;
+        return;
+    }
+    sprite_decks[deck].phase_milli = phase;
+    sprite_decks[deck].have_phase = 1;
 }
 
 static long sprites_timestretch_operate(void *stretch, long position,
@@ -1114,8 +1003,6 @@ static void sprites_feature_remove(void)
         if (job) {
             if (job->block)
                 munmap(job->block, job->block_bytes);
-            if (job->segments)
-                munmap(job->segments, sizeof(*job->segments) * SPRITE_SEGMENT_LIMIT);
             munmap(job, 4096u);
         }
     }
@@ -1131,7 +1018,7 @@ static void sprites_feature_track_will_load(unsigned int deck, void *reader,
         return;
     sprite_decks[deck].generation++;
     sprite_decks[deck].live = 0;
-    sprite_decks[deck].have_position = 0;
+    sprite_decks[deck].have_phase = 0;
 }
 
 static void sprites_feature_track_did_load(unsigned int deck, void *reader,

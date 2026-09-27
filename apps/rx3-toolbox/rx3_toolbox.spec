@@ -59,7 +59,6 @@ analysis = Analysis(
         "sprite_studio",
         "theme",
         "PIL",
-        "pyrekordbox",
     ],
     hookspath=[],
     hooksconfig={},

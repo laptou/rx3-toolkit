@@ -1,64 +1,27 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Sprite packs, beat indexes, and the rules the player copies."""
+"""Sprite packs and the rules the player copies."""
 
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from pyrekordbox.anlz.structs import AnlzFileHeader, AnlzTag
-
-from tools.rx3_sprites.beatgrid import BeatGridError, grid_from_anlz, grids_from_tree
 from tools.rx3_sprites.capacity import report
 from tools.rx3_sprites.census import CensusError, histogram, summarize
+from tools.rx3_sprites.cli import main as sprites_main
 from tools.rx3_sprites.fixture import checker, probe_blob, proof_8
-from tools.rx3_sprites.index import IndexError, decode_index, encode_index
 from tools.rx3_sprites.limits import MEMORY_CEILING
 from tools.rx3_sprites.pack import PackError, decode, encode
 from tools.rx3_sprites.proof import FormatProof, ProofError, parse_anchors, parse_format
 from tools.rx3_sprites.provision import write_tree
-from tools.rx3_sprites.quantize import QuantizeError, quantize
+from tools.rx3_sprites.quantize import quantize
 from tools.rx3_sprites.select import choose
 from tools.rx3_sprites.source import SourceError, compile_source, load_source
-from tools.rx3_sprites.timing import Segment, beat_frame, fps_frame
-from tools.rx3_stems.rekordbox import export_stem
-
-
-def _anlz(path_text: str, beats: list[tuple[int, int, int]]) -> bytes:
-    encoded = path_text.encode("utf-16-be")
-    length = len(encoded) + 2
-    ppth = AnlzTag.build({
-        "type": "PPTH",
-        "len_header": 16,
-        "len_tag": 16 + length,
-        "content": {"len_path": length, "path": path_text},
-    })
-    pqtz = AnlzTag.build({
-        "type": "PQTZ",
-        "len_header": 24,
-        "len_tag": 24 + 8 * len(beats),
-        "content": {
-            "u2": 0x80000,
-            "entry_count": len(beats),
-            "entries": [
-                {"beat": beat, "tempo": tempo, "time": time_ms}
-                for beat, tempo, time_ms in beats
-            ],
-        },
-    })
-    body = ppth + pqtz
-    header = AnlzFileHeader.build({
-        "type": "PMAI",
-        "len_header": 28,
-        "len_file": 28 + len(body),
-        "u1": 0,
-        "u2": 0,
-        "u3": 0,
-        "u4": 0,
-    })
-    return header + body
+from tools.rx3_sprites.timing import fps_frame, phase_frame
 
 
 def _png(path: Path, width: int, height: int, frame: int) -> None:
@@ -74,15 +37,10 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(fps_frame(500, 10, 1, 4), 1)
         self.assertEqual(fps_frame(0, 12, 1, 8), 0)
 
-    def test_seek_uses_absolute_phase(self):
-        segments = (Segment(0, 120000),)
-        self.assertEqual(beat_frame(-1, segments, 4, 1), 0)
-        self.assertEqual(beat_frame(11025, segments, 4, 1), 2)
-
-    def test_variable_grid_interpolates_then_extrapolates(self):
-        segments = (Segment(0, 120000), Segment(22050, 60000))
-        self.assertEqual(beat_frame(11025, segments, 4, 1), 2)
-        self.assertEqual(beat_frame(44100, segments, 4, 1), 2)
+    def test_phase_zero_seek_and_missing_clock(self):
+        self.assertEqual(phase_frame(0, 1, 1, 4), 0)
+        self.assertEqual(phase_frame(2500, 1, 1, 4), 2)
+        self.assertIsNone(phase_frame(None, 1, 1, 4))
 
 
 class PackTests(unittest.TestCase):
@@ -127,8 +85,16 @@ class PackTests(unittest.TestCase):
         self.assertEqual(faint_frames[0], b"\x00")
         self.assertEqual(solid_frames[0], b"\x01")
         many = [[(index * 16, 0, 0, 255) for index in range(16)]]
-        with self.assertRaises(QuantizeError):
-            quantize(many, FormatProof(2, 1, 4, 0, 2))
+        palette, packed = quantize(many, FormatProof(2, 1, 4, 0, 2))
+        self.assertLessEqual(len(palette) // 2, 16)
+        self.assertTrue(all(pixel >> 4 <= 15 and (pixel & 0xF) <= 15 for pixel in packed[0]))
+
+    def test_too_many_colours_share_one_palette(self):
+        pixels = [(index % 32 * 8, (index // 32) % 32 * 8, 0, 255) for index in range(300)]
+        palette, packed = quantize([pixels], proof_8())
+        self.assertLessEqual(len(palette) // 2, 256)
+        self.assertEqual(len(packed[0]), 300)
+        self.assertTrue(all(pixel != 0 for pixel in packed[0]))
 
     def test_source_sheet_and_bool_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -166,39 +132,6 @@ class PackTests(unittest.TestCase):
             (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaises(SourceError):
                 load_source(root)
-
-
-class BeatIndexTests(unittest.TestCase):
-    def test_anlz_round_trip_and_collision(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            first = root / "ANLZ0001.DAT"
-            second = root / "nested" / "ANLZ0002.EXT"
-            second.parent.mkdir()
-            first.write_bytes(_anlz(
-                "C:/music/Square Pulse.mp3",
-                [(1, 12000, 0), (2, 6000, 500)],
-            ))
-            grid = grid_from_anlz(first)
-            self.assertEqual(grid.identity, "Square Pulse")
-            self.assertEqual(grid.segments[1].start_samples, 22050)
-            blob = encode_index((grid,))
-            decoded = decode_index(blob)
-            self.assertEqual(decoded[0].segments, grid.segments)
-            broken = bytearray(blob)
-            broken[-1] ^= 1
-            with self.assertRaises(IndexError):
-                decode_index(bytes(broken))
-            second.write_bytes(_anlz("D:/other/Square Pulse.wav", [(1, 10000, 0)]))
-            with self.assertRaises(BeatGridError):
-                grids_from_tree(root)
-            second.write_bytes(_anlz("D:/other/Other Pulse.wav", [(1, 10000, 0)]))
-            found = grids_from_tree(root)
-            self.assertEqual([item.identity for item in found], ["Other Pulse", "Square Pulse"])
-
-    def test_long_export_name_matches_stems(self):
-        raw = "x" * 46
-        self.assertEqual(export_stem(raw), "x" * 44)
 
 
 class ProofAndProvisionTests(unittest.TestCase):
@@ -241,7 +174,7 @@ class ProofAndProvisionTests(unittest.TestCase):
             )
             catalog = (written / "catalog.txt").read_text(encoding="utf-8")
             self.assertEqual(catalog, "a.rx3spr\nb.rx3spr\n")
-            self.assertTrue((written / "tracks.rx3idx").is_file())
+            self.assertFalse((written / "tracks.rx3idx").exists())
             self.assertEqual((root / "PIONEER" / "keep.txt").read_text(encoding="utf-8"), "leave me")
             self.assertIn("exceed", report(MEMORY_CEILING + 1, 10))
 
@@ -251,6 +184,68 @@ class ProofAndProvisionTests(unittest.TestCase):
         second = choose(names, "demo", 0, 1, first)
         self.assertNotEqual(first, second)
         self.assertEqual(choose(["only.rx3spr"], "demo", 1, 1, "only.rx3spr"), "only.rx3spr")
+
+
+def _source(root: Path) -> None:
+    _png(root / "a.png", 8, 8, 0)
+    manifest = {
+        "schema": 1,
+        "name": "squares",
+        "layout": "sequence",
+        "width": 8,
+        "height": 8,
+        "frame_count": 1,
+        "mode": "fps",
+        "fps_num": 8,
+        "fps_den": 1,
+        "frames_per_beat": 0,
+        "beats_per_loop": 0,
+        "anchor": "center",
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+class CliTests(unittest.TestCase):
+    def test_missing_source_exits_2(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.assertEqual(sprites_main(["preview"]), 2)
+            self.assertEqual(sprites_main(["write", "--dest", "/tmp"]), 2)
+
+    def test_preview_and_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "art"
+            source.mkdir()
+            _source(source)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                preview = sprites_main(["preview", "--source", str(source), "-vv"])
+            self.assertEqual(preview, 0)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("INFO rx3.sprites: squares fps 8x8 1 frames", stderr.getvalue())
+            self.assertIn("DEBUG rx3.sprites: a.png", stderr.getvalue())
+            self.assertFalse((root / "RX3_SPRITES").exists())
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                written = sprites_main([
+                    "write", "--source", str(source), "--dest", str(root),
+                ])
+            self.assertEqual(written, 0)
+            self.assertEqual(stdout.getvalue(), "")
+            text = stderr.getvalue()
+            self.assertIn("WARNING rx3.sprites: format proof is the unproven placeholder", text)
+            self.assertIn(
+                "WARNING rx3.sprites: no anchor proof; the player will load the pack and draw nothing",
+                text,
+            )
+            tree = root / "RX3_SPRITES"
+            self.assertTrue((tree / "squares.rx3spr").is_file())
+            self.assertTrue((tree / "catalog.txt").is_file())
+            self.assertFalse((tree / "tracks.rx3idx").exists())
+            self.assertFalse((tree / "anchors.proof").exists())
 
 
 class ToolboxTests(unittest.TestCase):

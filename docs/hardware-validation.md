@@ -14,7 +14,7 @@ Nothing in this procedure writes internal flash. Boot without the stick, or powe
 5. Copy the confirmed format into `format.proof`. Deselect the probe. Draw one static synthetic sprite on one proven anchor.
 6. Fixed-rate animation on each deck and each waveform view.
 7. Repeated track loads, checking that each deck picks independently and does not immediately repeat when another pack exists.
-8. Beat sync on a constant-tempo track and a variable-tempo track. Include cue, seek, loop, scratch, tempo bend, and Master Tempo.
+8. Beat sync on a constant-tempo track and a variable-tempo track. Include cue, seek, loop, scratch, tempo bend, and Master Tempo. Beat mode draws nothing until the player beat-clock address is proven and stored. The expected log until then is `sprites: beat clock unavailable`.
 9. Stems and sprites together for a long playback, including USB browsing.
 10. A truncated pack, a missing `RX3_SPRITES` directory, an unsupported layout, and a forced player restart. Stock audio and the stock interface must continue. The rejected test must roll the player binary back.
 

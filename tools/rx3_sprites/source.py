@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from tools.rx3_sprites.limits import (
 from tools.rx3_sprites.pack import Pack, PackError
 from tools.rx3_sprites.proof import FormatProof
 from tools.rx3_sprites.quantize import QuantizeError, quantize
+
+log = logging.getLogger("rx3.sprites")
 
 
 class SourceError(ValueError):
@@ -81,6 +84,7 @@ def load_source(directory: Path) -> Source:
     if mode == MODE_BEAT and frames_per_beat * beats_per_loop != frame_count:
         raise SourceError("beat loop must cover every frame once")
     frames = _frames(directory, manifest, width, height, frame_count)
+    log.info("%s %s %sx%s %s frames", name, mode_name, width, height, frame_count)
     return Source(
         name=name, mode=mode, fps_num=fps_num, fps_den=fps_den,
         frames_per_beat=frames_per_beat, beats_per_loop=beats_per_loop,
@@ -146,6 +150,8 @@ def _frames(directory: Path, manifest: dict, width: int, height: int, count: int
         )
         if len(paths) != count:
             raise SourceError("png count does not match frame_count")
+        for path in paths:
+            log.debug("%s", path.name)
         images = tuple(_open(path, width, height) for path in paths)
     elif layout == "sheet":
         columns = manifest.get("columns")
@@ -154,7 +160,9 @@ def _frames(directory: Path, manifest: dict, width: int, height: int, count: int
             raise SourceError("a sheet needs integer columns and rows")
         if not isinstance(columns, int) or not isinstance(rows, int) or columns < 1 or rows < 1:
             raise SourceError("a sheet needs integer columns and rows")
-        sheet = _open_unbounded(directory / str(manifest.get("sheet", "sheet.png")))
+        sheet_path = directory / str(manifest.get("sheet", "sheet.png"))
+        log.debug("%s", sheet_path.name)
+        sheet = _open_unbounded(sheet_path)
         if columns * rows != count or sheet.width != columns * width or sheet.height != rows * height:
             raise SourceError("sheet geometry does not match the frames")
         images_list = []
