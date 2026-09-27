@@ -24,7 +24,8 @@ static unsigned long hooked_get_stream(void *reader, unsigned long position,
     return result;
 }
 
-static int hooked_on_key_pad(void *player_innards, const void *key_input)
+/* slip loop pads 7 and 8. the pad broker calls stock when this returns 0. */
+static int stems_feature_on_pad(void *player_innards, const void *key_input)
 {
     const uint8_t *event = key_input;
     uint16_t key_code = (uint16_t)event[8] | ((uint16_t)event[9] << 8);
@@ -32,7 +33,7 @@ static int hooked_on_key_pad(void *player_innards, const void *key_input)
 
     /* Pads 7 and 8 use key codes 0x411d and 0x411e. */
     if (key_code < 0x411du || key_code > 0x411eu)
-        return original_on_key_pad(player_innards, key_input);
+        return 0;
 
     unsigned int bit = 1u << (key_code - 0x411du);
     unsigned int object_channel =
@@ -83,7 +84,7 @@ static int hooked_on_key_pad(void *player_innards, const void *key_input)
             captured_pad_mask[deck] &= ~bit;
         return 1;
     }
-    return original_on_key_pad(player_innards, key_input);
+    return 0;
 }
 
 struct stems_rgb { uint8_t red, green, blue; };
@@ -204,11 +205,11 @@ static int stems_feature_install(void)
     original_get_stream = (get_stream_fn)install_hook(
         &get_stream_hook, GET_STREAM_AT, get_stream_guard,
         (void *)hooked_get_stream);
-    original_on_key_pad = (on_key_pad_fn)install_hook(
-        &pad_hook, ON_KEY_PAD, pad_guard, (void *)hooked_on_key_pad);
     original_check_slip_led = (check_slip_led_fn)install_pc_ldr_hook(
         &slip_led_hook, CHECK_SLIP_LED, slip_led_guard,
         (void *)hooked_check_slip_led);
+    /* the pad broker owns onKey_Pad. without its trampoline, pads 7 and 8
+       would have nowhere to fall through. */
     return original_get_stream && original_on_key_pad &&
            original_check_slip_led;
 }
@@ -216,10 +217,8 @@ static int stems_feature_install(void)
 static void stems_feature_remove(void)
 {
     uninstall_hook(&slip_led_hook);
-    uninstall_hook(&pad_hook);
     uninstall_hook(&get_stream_hook);
     original_check_slip_led = 0;
-    original_on_key_pad = 0;
     original_get_stream = 0;
 }
 

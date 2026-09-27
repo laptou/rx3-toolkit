@@ -339,6 +339,7 @@ static void emulator_activate_initial_panel(void);
 static int stems_feature_configured(void);
 static int stems_feature_install(void);
 static void stems_feature_remove(void);
+static int stems_feature_on_pad(void *innards, const void *key);
 static void stems_feature_track_will_load(unsigned int deck, void *reader,
                                           const void *track_info);
 static void stems_feature_track_did_load(unsigned int deck, void *reader,
@@ -419,6 +420,7 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         .track_will_load = stems_feature_track_will_load,
         .track_did_load = stems_feature_track_did_load,
         .destroy_deck = stems_feature_destroy_deck,
+        .on_pad = stems_feature_on_pad,
     },
     {
         .name = "sprites",
@@ -2204,6 +2206,7 @@ static void remove_channel_tap(void)
 }
 
 #include "rx3_beatfx_broker.h"
+#include "rx3_pad_broker.h"
 #include "rx3_deck_tap.h"
 
 #include "../../keyshift/1.19/rx3_keyshift.h"
@@ -2262,6 +2265,7 @@ static unsigned int install_features(void)
     unsigned int active = 0;
     /* first, so a feature's install can refuse when a hook it needs is out. */
     install_beat_fx_broker();
+    install_pad_broker();
     install_deck_tap();
     for (unsigned int i = 0; i < RUNTIME_FEATURE_COUNT; i++) {
         struct rx3_runtime_feature *feature = &runtime_features[i];
@@ -2285,6 +2289,7 @@ static void remove_features(void)
 {
     remove_channel_tap();
     remove_beat_fx_broker();
+    remove_pad_broker();
     remove_deck_tap();
     for (unsigned int i = RUNTIME_FEATURE_COUNT; i > 0u; i--) {
         struct rx3_runtime_feature *feature = &runtime_features[i - 1u];

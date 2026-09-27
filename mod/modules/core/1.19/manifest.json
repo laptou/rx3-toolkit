@@ -42,6 +42,7 @@
     "rx3_ds_gr.h",
     "rx3_image_relabel.h",
     "rx3_beatfx_broker.h",
+    "rx3_pad_broker.h",
     "rx3_deck_tap.h"
   ],
   "arm_hook": {

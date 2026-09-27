@@ -55,6 +55,8 @@ struct rx3_runtime_feature {
     void (*beat_fx_info)(uint8_t *block);
     /* ui thread, the image to draw instead of image_id, or image_id. */
     uint32_t (*image_swap)(uint32_t image_id);
+    /* ui thread, a performance pad. nonzero swallows the event. */
+    int (*on_pad)(void *innards, const void *key);
 };
 
 #endif /* RX3_FEATURE_API_H */

@@ -408,9 +408,12 @@ require(
 require(
     "static int hooked_on_key_pad" not in HOOK
     and "static void hooked_check_slip_led" not in HOOK
-    and "static int hooked_on_key_pad" in STEMS_FEATURE
-    and "static void hooked_check_slip_led" in STEMS_FEATURE,
-    "stems must own its optional pad and LED hooks",
+    and "static int stems_feature_on_pad" in STEMS_FEATURE
+    and "static void hooked_check_slip_led" in STEMS_FEATURE
+    and '#include "rx3_pad_broker.h"' in HOOK
+    and "install_pad_broker();" in HOOK
+    and "remove_pad_broker();" in HOOK,
+    "the pad broker owns onKey_Pad; stems still owns its slip-loop LED hook",
 )
 
 BROKER = (ROOT / "rx3_beatfx_broker.h").read_text()
