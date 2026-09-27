@@ -21,7 +21,7 @@ Both commands take the same optional flags:
 | Flag | Effect |
 | --- | --- |
 | `--format-proof PATH` | Must match the measured format: format 2, palette 1, 8 bpp, transparent 0, entry 2. Without this file the command writes that format. |
-| `--anchors PATH` | Text from the hardware check. Without this file the command warns. The player loads the pack and draws nothing. |
+| `--anchors PATH` | Explicit anchor proof. Without this file the command reads `DEST/RX3_RUNTIME/sprite-trace.log` and writes an anchor for each stable waveform. If that log has none, the command warns and the player draws nothing. |
 | `-v`, `--verbose` | Summary on stderr. A second `-v` also names each PNG. |
 | `-q`, `--quiet` | Errors only. A second `-q` silences the log. |
 | `--log-level LEVEL` | One of `debug`, `info`, `warning`, or `error`. This flag overrides `-v` and `-q`. |

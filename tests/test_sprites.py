@@ -7,6 +7,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -16,11 +17,18 @@ from tools.rx3_sprites.cli import main as sprites_main
 from tools.rx3_sprites.fixture import checker, probe_blob, proof_8
 from tools.rx3_sprites.limits import MEMORY_CEILING
 from tools.rx3_sprites.pack import PackError, decode, encode
-from tools.rx3_sprites.proof import ProofError, parse_anchors, parse_format
+from tools.rx3_sprites.proof import (
+    Anchor,
+    ProofError,
+    anchors_from_trace,
+    parse_anchors,
+    parse_format,
+    trace_fit_edge,
+)
 from tools.rx3_sprites.provision import write_tree
 from tools.rx3_sprites.quantize import quantize
 from tools.rx3_sprites.select import choose
-from tools.rx3_sprites.source import SourceError, compile_source, load_source
+from tools.rx3_sprites.source import SourceError, compile_source, fit_source, load_source
 from tools.rx3_sprites.timing import fps_frame, phase_frame
 
 
@@ -135,6 +143,41 @@ class PackTests(unittest.TestCase):
 
 
 class ProofAndProvisionTests(unittest.TestCase):
+    def test_trace_keeps_only_a_stable_corner(self):
+        text = "\n".join((
+            "100 1 0 0 400 80",
+            "100 1 20 20 420 100",
+            "200 2 800 400 1270 480",
+            "200 2 0 400 400 480",
+            "300 3 700 0 1100 80",
+            "400 4 0 400 500 460",
+            "500 5 0 400 500 460",
+            "600 6 10 10 30 30",
+        ))
+        self.assertEqual(
+            anchors_from_trace(text),
+            (Anchor(100, 1, 0),),
+        )
+        tied = "\n".join((
+            "1 10 800 400 1200 480",
+            "1 11 800 400 1200 480",
+        ))
+        self.assertEqual(anchors_from_trace(tied), ())
+        measured = "257 3449 756 532 1260 592\n257 3462 754 117 806 136\n"
+        self.assertEqual(trace_fit_edge(measured), 60)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _png(root / "a.png", 64, 64, 0)
+            manifest = {
+                "schema": 1, "name": "big", "layout": "sequence",
+                "width": 64, "height": 64, "frame_count": 1, "mode": "fps",
+                "fps_num": 8, "fps_den": 1, "frames_per_beat": 0,
+                "beats_per_loop": 0, "anchor": "center",
+            }
+            (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            fitted = fit_source(load_source(root), 60)
+        self.assertEqual(fitted.frames[0].size, (60, 60))
+
     def test_ambiguous_anchor_is_rejected(self):
         text = "RX3ANC1\nlayer 1 id 2 deck 0\nlayer 1 id 2 deck 1\n"
         with self.assertRaises(ProofError):
@@ -177,6 +220,29 @@ class ProofAndProvisionTests(unittest.TestCase):
             self.assertFalse((written / "tracks.rx3idx").exists())
             self.assertEqual((root / "PIONEER" / "keep.txt").read_text(encoding="utf-8"), "leave me")
             self.assertIn("exceed", report(MEMORY_CEILING + 1, 10))
+            # macOS deletes the AppleDouble sidecar when the real file goes.
+            (written / "._format.proof").write_bytes(b"resource")
+            real_unlink = Path.unlink
+
+            def unlink(self, *args, **kwargs):
+                shadow = None
+                if not self.name.startswith("._"):
+                    shadow = self.with_name("._" + self.name)
+                real_unlink(self, *args, **kwargs)
+                if shadow is not None and shadow.exists():
+                    real_unlink(shadow)
+
+            with patch.object(Path, "unlink", unlink):
+                again = write_tree(
+                    root,
+                    [("a.rx3spr", pack)],
+                    format_proof=proof_8().text(),
+                )
+            self.assertEqual(
+                (again / "format.proof").read_text(encoding="utf-8"),
+                proof_8().text(),
+            )
+            self.assertFalse(any(child.name.startswith(".rx3-sprites-") for child in root.iterdir()))
 
     def test_choice_does_not_repeat_when_another_pack_exists(self):
         names = ["a.rx3spr", "b.rx3spr"]
@@ -250,6 +316,34 @@ class CliTests(unittest.TestCase):
             self.assertTrue((tree / "catalog.txt").is_file())
             self.assertFalse((tree / "tracks.rx3idx").exists())
             self.assertFalse((tree / "anchors.proof").exists())
+
+    def test_write_reads_waveform_anchors_from_the_stick_trace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "art"
+            source.mkdir()
+            _source(source)
+            runtime = root / "RX3_RUNTIME"
+            runtime.mkdir()
+            # the measured log: icons, one lower-right waveform, no upper-left one.
+            (runtime / "sprite-trace.log").write_text(
+                "257 3462 754 117 806 136\n"
+                "257 3449 756 532 1260 592\n"
+                "257 4294967295 2 102 0 0\n"
+                "513 3041 511 65 611 125\n"
+                "1025 3245 510 14 610 74\n",
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                written = sprites_main([
+                    "write", "--source", str(source), "--dest", str(root),
+                ])
+            self.assertEqual(written, 0)
+            proof = (root / "RX3_SPRITES" / "anchors.proof").read_text(encoding="utf-8")
+            self.assertEqual(proof, "RX3ANC1\nlayer 257 id 3449 deck 1\n")
+            self.assertIn("anchor from sprite trace: layer 257 id 3449 deck 1", stderr.getvalue())
+            self.assertIn("no waveform for deck 0", stderr.getvalue())
 
 
 class ToolboxTests(unittest.TestCase):

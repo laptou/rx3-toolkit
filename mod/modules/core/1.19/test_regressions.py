@@ -90,10 +90,13 @@ require(
     "because a run that fails while loading modules is the one worth logging",
 )
 require(
-    'mv -f "$LOG" "$OUT/session-previous.txt"' in AUTOEXEC
+    'LOG="$OUT/session-$BOOT_TAG.txt"' in AUTOEXEC
+    and 'boot.seq' in AUTOEXEC
+    and 'echo "boot $BOOT_NUMBER id $BOOT_ID"' in AUTOEXEC
     and '--- launch, session pid' in AUTOEXEC,
-    "a second insertion must not truncate the log of the run that applied the "
-    "patch, and the player's cumulative output must say where a run begins",
+    "each boot must write a numbered session whose first line is a random id, "
+    "because the player has no clock and a rewritten session.txt cannot be told "
+    "from the previous one",
 )
 require(
     'say "restart requested by:' in AUTOEXEC

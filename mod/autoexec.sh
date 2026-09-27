@@ -4,7 +4,6 @@
 
 USB="$1"
 OUT="$USB/RX3_RUNTIME"
-LOG="$OUT/session.txt"
 RBP=/root/pdj/rbp
 TMP=/tmp/rx3-runtime
 PATCH_TABLE=""
@@ -38,16 +37,44 @@ MODULE_LOAD_FAILED=0
 # mid-write loses a directory, and the open handle also keeps the kernel from
 # releasing the device, so the drive comes back under another name and the
 # runtime sees a mount that moved.
+# the player has no clock, so file mtimes do not say which boot this was.
+# boot.seq is the count. the id is random, so a rewritten file is obvious
+# even when the count could not be saved.
+mkdir -p "$OUT" 2>/dev/null
+previous=0
+if [ -r "$OUT/boot.seq" ]; then
+    read -r previous < "$OUT/boot.seq" || previous=0
+fi
+case "$previous" in
+    ''|*[!0-9]*) previous=0 ;;
+esac
+BOOT_NUMBER=$((previous + 1))
+if ! printf '%s\n' "$BOOT_NUMBER" > "$OUT/boot.seq" 2>/dev/null; then
+    BOOT_NUMBER=0
+fi
+BOOT_ID=""
+if [ -r /dev/urandom ]; then
+    BOOT_ID=$(od -An -N4 -tx4 /dev/urandom 2>/dev/null | tr -cd '0-9a-fA-F')
+fi
+[ -n "$BOOT_ID" ] || BOOT_ID=$$
+BOOT_TAG=$(printf '%04d' "$BOOT_NUMBER")
+export BOOT_NUMBER BOOT_ID BOOT_TAG
+{
+    echo "boot $BOOT_NUMBER"
+    echo "id $BOOT_ID"
+    echo "session session-$BOOT_TAG.txt"
+    echo "trace sprite-trace-$BOOT_TAG.log"
+    echo "status sprite-status-$BOOT_TAG.log"
+    echo "stdout rbp-stdout-$BOOT_TAG.txt"
+} > "$OUT/latest.txt" 2>/dev/null
+
 if [ -d /mnt/iso/modules/logging ]; then
     LOGGING=1
-    mkdir -p "$OUT" 2>/dev/null
-    # The run worth reading is the one that applied the patch, and the next
-    # insertion is usually what the operator does to see whether it took. Keep
-    # one generation, or that second insertion truncates the only evidence.
-    [ -f "$LOG" ] && mv -f "$LOG" "$OUT/session-previous.txt" 2>/dev/null
+    LOG="$OUT/session-$BOOT_TAG.txt"
     : > "$LOG"
-    RBP_OUTPUT="$OUT/rbp_stdout.txt"
-    RBP_RESTORE_OUTPUT="$OUT/rbp_restore.txt"
+    echo "boot $BOOT_NUMBER id $BOOT_ID" >> "$LOG"
+    RBP_OUTPUT="$OUT/rbp-stdout-$BOOT_TAG.txt"
+    RBP_RESTORE_OUTPUT="$OUT/rbp-restore-$BOOT_TAG.txt"
 else
     LOGGING=0
     LOG=/dev/null

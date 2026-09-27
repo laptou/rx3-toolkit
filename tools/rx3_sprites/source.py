@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import Image
@@ -90,6 +90,24 @@ def load_source(directory: Path) -> Source:
         frames_per_beat=frames_per_beat, beats_per_loop=beats_per_loop,
         anchor=anchor, frames=frames,
     )
+
+
+def fit_source(source: Source, edge: int) -> Source:
+    """Shrink a square animation so the running player can place it on the strip.
+
+    The player refuses a frame taller than the waveform box. The measured
+    strip can be shorter than the authored frame.
+    """
+    width = source.frames[0].width
+    height = source.frames[0].height
+    if edge < 1 or (edge >= width and edge >= height):
+        return source
+    frames = tuple(frame.resize((edge, edge), Image.Resampling.BOX) for frame in source.frames)
+    log.warning(
+        "scaled sprite from %sx%s to %sx%s so it fits the waveform",
+        width, height, edge, edge,
+    )
+    return replace(source, frames=frames)
 
 
 def compile_source(source: Source, proof: FormatProof) -> Pack:

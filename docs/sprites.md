@@ -15,7 +15,7 @@ RX3_SPRITES/
 
 `catalog.txt` is one pack filename per line, sorted, with a final newline. Hidden files are ignored. The player does not scan the directory itself.
 
-`format.proof` and `anchors.proof` come from a hardware check. Until both exist and agree with a single layout, deck sprites do not draw. See [hardware validation](hardware-validation.md). Without `anchors.proof` the player still loads the pack and draws nothing.
+`format.proof` and `anchors.proof` come from a hardware check. Until both exist and agree with a single layout, deck sprites do not draw. See [hardware validation](hardware-validation.md). Without `anchors.proof` the player still loads the pack and draws nothing, and it records draw lines in `RX3_RUNTIME/sprite-trace.log` on the stick.
 
 The computer does not read Rekordbox analysis files. Beat timing comes from the player.
 
@@ -44,7 +44,7 @@ python -m tools.rx3_sprites preview --source DIR -v
 python -m tools.rx3_sprites write --source DIR --dest DIR
 ```
 
-`--format-proof` must be the measured file below. Omit it and the command writes that file. `--anchors` is still the hardware check for where to draw. Without it the player loads the pack and draws nothing.
+`--format-proof` must be the measured file below. Omit it and the command writes that file. `--anchors` is an explicit proof. Omit it and the command reads `RX3_RUNTIME/sprite-trace.log` on the destination, when that file is there, and writes `anchors.proof` for each waveform that stays on one deck in both layouts. Upper left is deck 0. Lower right is deck 1. If the log has no such waveform, the player loads the pack and draws nothing.
 
 ```
 RX3FMT1

@@ -8,7 +8,8 @@ per deck when a track loads. Fixed-rate packs play from wall time. Beat-mode
 packs follow the player's beat clock. That clock address is recorded only
 after a firmware 1.19 proof, and until then beat mode draws nothing. A missing
 proof file, a bad pack, or an unknown waveform layout turns that deck's overlay
-off. Stock drawing and stems keep running.
+off. Until `anchors.proof` exists, each boot writes `RX3_RUNTIME/sprite-trace.log`
+on the stick. Stock drawing and stems keep running.
 
 See `docs/sprites.md` for the file layout and `docs/hardware-validation.md` for
 the checks that have to be done on a player.

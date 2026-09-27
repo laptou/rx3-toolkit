@@ -9,8 +9,14 @@ import tempfile
 from pathlib import Path
 
 from tools.rx3_sprites.pack import Pack, encode
-from tools.rx3_sprites.proof import parse_anchors, parse_format
-from tools.rx3_sprites.source import compile_source, load_source
+from tools.rx3_sprites.proof import (
+    anchors_from_trace,
+    anchors_text,
+    parse_anchors,
+    parse_format,
+    trace_fit_edge,
+)
+from tools.rx3_sprites.source import compile_source, fit_source, load_source
 
 
 log = logging.getLogger("rx3.sprites")
@@ -41,8 +47,10 @@ def write_tree(
         raise ProvisionError("sprite filenames collide")
     parent = destination
     parent.mkdir(parents=True, exist_ok=True)
+    _sweep_leftovers(parent)
     temporary = Path(tempfile.mkdtemp(prefix=".rx3-sprites-", dir=parent))
     written_bytes = 0
+    published = False
     try:
         catalog = "".join(f"{name}\n" for name in sorted(names))
         _write(temporary / "catalog.txt", catalog.encode("utf-8"))
@@ -62,11 +70,14 @@ def write_tree(
             retired = Path(tempfile.mkdtemp(prefix=".rx3-sprites-old-", dir=parent))
             os.replace(root, retired / "old")
             os.replace(temporary, root)
+            published = True
             _remove_tree(retired)
         else:
             os.replace(temporary, root)
+            published = True
     except Exception:
-        _remove_tree(temporary)
+        if not published:
+            _remove_tree(temporary)
         raise
     log.info("wrote %s (%s bytes)", root, written_bytes)
     return root
@@ -82,25 +93,77 @@ def provision(
     from tools.rx3_sprites.capacity import directory_bytes, report
 
     proof = parse_format(format_text)
-    anchors = anchor_text.strip()
+    anchors = _resolve_anchors(destination, anchor_text)
     if anchors:
-        parse_anchors(anchors if anchors.endswith("\n") else anchors + "\n")
+        parse_anchors(anchors)
     else:
         log.warning("no anchor proof; the player will load the pack and draw nothing")
     loaded = load_source(source)
+    trace = trace_log(destination)
+    if not anchor_text.strip() and trace is not None:
+        edge = trace_fit_edge(trace.read_text(encoding="utf-8", errors="replace"))
+        if edge is not None:
+            loaded = fit_source(loaded, edge)
     pack = compile_source(loaded, proof)
     root = write_tree(
         destination,
         [(f"{pack.name}.rx3spr", pack)],
         format_proof=proof.text(),
-        anchor_proof=(
-            None if not anchors
-            else anchors if anchors.endswith("\n") else anchors + "\n"
-        ),
+        anchor_proof=anchors or None,
     )
     sprite_bytes = (root / f"{pack.name}.rx3spr").stat().st_size
     stem_bytes = directory_bytes(destination / "RX3_STEMS", ".rx3stem")
     return report(sprite_bytes, stem_bytes)
+
+
+def trace_log(destination: Path) -> Path | None:
+    """The trace from the latest boot, then any older numbered trace."""
+    runtime = destination / "RX3_RUNTIME"
+    latest = runtime / "latest.txt"
+    if latest.is_file():
+        for line in latest.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("trace "):
+                named = runtime / line.split(None, 1)[1].strip()
+                if named.is_file():
+                    return named
+    numbered: list[tuple[int, Path]] = []
+    if runtime.is_dir():
+        for path in runtime.glob("sprite-trace-*.log"):
+            suffix = path.name[len("sprite-trace-") : -len(".log")]
+            if suffix.isdigit():
+                numbered.append((int(suffix), path))
+    if numbered:
+        return max(numbered)[1]
+    plain = runtime / "sprite-trace.log"
+    return plain if plain.is_file() else None
+
+
+def _resolve_anchors(destination: Path, anchor_text: str) -> str:
+    """Use an explicit proof, or one waveform per deck from the stick trace."""
+    text = anchor_text.strip()
+    if text:
+        return text if text.endswith("\n") else text + "\n"
+    trace = trace_log(destination)
+    if trace is None:
+        return ""
+    found = anchors_from_trace(trace.read_text(encoding="utf-8", errors="replace"))
+    if not found:
+        return ""
+    present = {item.deck for item in found}
+    for item in found:
+        log.warning(
+            "anchor from sprite trace: layer %s id %s deck %s",
+            item.layer,
+            item.image_id,
+            item.deck,
+        )
+    for deck in (0, 1):
+        if deck not in present:
+            log.warning(
+                "sprite trace has no waveform for deck %s; that deck draws nothing",
+                deck,
+            )
+    return anchors_text(found)
 
 
 def _safe_name(name: str) -> bool:
@@ -119,12 +182,28 @@ def _write(path: Path, data: bytes) -> None:
     os.replace(temporary, path)
 
 
+def _sweep_leftovers(parent: Path) -> None:
+    """Drop folders left by a write that died while retiring the previous tree."""
+    for child in parent.iterdir():
+        if child.name.startswith(".rx3-sprites-") and child.is_dir():
+            _remove_tree(child)
+
+
 def _remove_tree(path: Path) -> None:
+    """Delete a directory this command created.
+
+    On a FAT stick, macOS stores an AppleDouble file named `._name` beside
+    each file it writes. Unlinking the real file removes that sidecar too, so
+    a name the walk already listed can be gone by the time we reach it.
+    """
     if not path.exists():
         return
     for child in sorted(path.rglob("*"), reverse=True):
-        if child.is_file() or child.is_symlink():
-            child.unlink()
-        else:
-            child.rmdir()
+        try:
+            if child.is_symlink() or child.is_file():
+                child.unlink(missing_ok=True)
+            elif child.exists():
+                child.rmdir()
+        except FileNotFoundError:
+            continue
     path.rmdir()

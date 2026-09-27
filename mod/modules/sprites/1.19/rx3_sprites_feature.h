@@ -16,6 +16,8 @@
 #define SPRITE_MEMORY_CEILING (2u * 1024u * 1024u)
 #define SPRITE_FILE_LIMIT (1024u * 1024u)
 #define SPRITE_TRACE_LIMIT 96u
+#define SPRITE_WAVE_MIN_W 200
+#define SPRITE_WAVE_MIN_H 40
 
 struct __attribute__((packed)) rx3_sprite_file_header {
     char magic[8];
@@ -426,15 +428,18 @@ static int sprite_load_proofs(void)
         return -1;
     }
     munmap(block, size);
-    if (sprite_join(path, sizeof(path), "anchors.proof"))
-        return -1;
+    if (sprite_join(path, sizeof(path), "anchors.proof")) {
+        log_line("sprite format ok; learning the waveform from the screen");
+        return 0;
+    }
     block = sprite_slurp(path, &size, 2048u);
     if (!block || sprite_parse_anchors(block, size)) {
         if (block)
             munmap(block, size);
         sprite_anchors_ok = 0;
         sprite_log_once(4u, "sprites disabled: waveform anchor is not proven");
-        return -1;
+        log_line("sprite format ok; learning the waveform from the screen");
+        return 0;
     }
     munmap(block, size);
     log_line("sprite hard-mask proof ok");
@@ -466,9 +471,12 @@ static int sprite_publish(struct sprite_job *job)
     return 0;
 }
 
+static void sprite_note(unsigned bit, const char *message);
+
 static void *sprite_loader(void *opaque)
 {
     struct sprite_request *request = opaque;
+    int failed = 1;
     char path[512];
     size_t catalog_size = 0;
     char *catalog = 0;
@@ -583,10 +591,14 @@ static void *sprite_loader(void *opaque)
         memcpy(job->name, pack + 64u, header->name_length);
     if (sprite_publish(job))
         goto release_catalog;
+    failed = 0;
+    sprite_note(128u, "sprite pack loaded");
 release_catalog:
     if (catalog)
         munmap(catalog, catalog_size);
 done:
+    if (failed)
+        sprite_note(32u, "sprite pack was not loaded");
     munmap(request, 4096u);
     return 0;
 }
@@ -642,6 +654,12 @@ static void sprite_take_jobs(void)
         if (!__sync_bool_compare_and_swap(&sprite_jobs[deck], job, 0))
             continue;
         state = &sprite_decks[deck];
+        /* the image table appears on the first tab draw. keep the pack
+           until that has happened. */
+        if (!tab_assets_ready) {
+            sprite_jobs[deck] = job;
+            continue;
+        }
         if (job->generation != state->generation || sprite_install_job(job)) {
             sprite_log_once(32u, "sprites disabled: image install failed");
             if (job->block)
@@ -688,25 +706,66 @@ static void sprite_draw_model(void *render, void *image, unsigned image_id,
     sprite_overlay_draw = 0;
 }
 
+static char sprite_trace_path[512];
+
+static const char *sprite_trace_file(void)
+{
+    const char *path;
+    unsigned index;
+    if (sprite_trace_path[0])
+        return sprite_trace_path;
+    path = getenv("RX3_SPRITE_TRACE_PATH");
+    if (!path || !path[0])
+        path = "/tmp/rx3-sprite-trace.log";
+    for (index = 0; path[index] && index + 1u < sizeof(sprite_trace_path); index++)
+        sprite_trace_path[index] = path[index];
+    sprite_trace_path[index] = 0;
+    return sprite_trace_path;
+}
+
+/* 0 upper left, 1 upper right, 2 lower left, 3 lower right.
+   only 0 and 3 name the same deck in both waveform layouts. */
+static unsigned sprite_trace_corner(uint16_t x1, uint16_t y1, uint16_t x2,
+                                   uint16_t y2)
+{
+    unsigned center_x = ((unsigned)x1 + (unsigned)x2) / 2u;
+    unsigned center_y = ((unsigned)y1 + (unsigned)y2) / 2u;
+    unsigned right = center_x >= 640u;
+    unsigned bottom = center_y >= 360u;
+    return (bottom << 1) | right;
+}
+
 static void sprite_trace(uint16_t layer, uint32_t image_id, uint16_t x1,
                         uint16_t y1, uint16_t x2, uint16_t y2)
 {
     static uint16_t layers[SPRITE_TRACE_LIMIT];
     static uint32_t ids[SPRITE_TRACE_LIMIT];
+    static uint8_t corners[SPRITE_TRACE_LIMIT];
     static unsigned seen;
     unsigned index;
+    unsigned corner;
     char line[96];
     unsigned length = 0;
     int fd;
+    int span_x = (int)x2 - (int)x1;
+    int span_y = (int)y2 - (int)y1;
+    /* icons used to fill the log before a waveform was drawn. */
+    if (image_id == 0u || image_id == 0xffffffffu)
+        return;
+    if (span_x < SPRITE_WAVE_MIN_W || span_y < SPRITE_WAVE_MIN_H)
+        return;
     if (seen >= SPRITE_TRACE_LIMIT)
         return;
+    corner = sprite_trace_corner(x1, y1, x2, y2);
     for (index = 0; index < seen; index++)
-        if (layers[index] == layer && ids[index] == image_id)
+        if (layers[index] == layer && ids[index] == image_id &&
+            corners[index] == corner)
             return;
     layers[seen] = layer;
     ids[seen] = image_id;
+    corners[seen] = (uint8_t)corner;
     seen++;
-    /* bounded decimal line. one record per distinct layer and image. */
+    /* bounded decimal line. one record per layer, image, and corner. */
     length = 0;
     {
         unsigned values[6];
@@ -735,7 +794,7 @@ static void sprite_trace(uint16_t layer, uint32_t image_id, uint16_t x1,
     }
     if (length + 1u < sizeof(line))
         line[length++] = '\n';
-    fd = open("/tmp/rx3-sprite-trace.log", O_WRONLY | O_CREAT | O_APPEND, 0600);
+    fd = open(sprite_trace_file(), O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd < 0)
         return;
     (void)write(fd, line, length);
@@ -857,39 +916,134 @@ static void sprite_draw_probe(void *render, void *image, uint16_t x1,
                       x1 + width / 2 + 4, y1 + height / 2 + 4);
 }
 
-static void sprites_feature_after_image(void *render, void *image,
-                                        uint16_t window_layer,
-                                        uint32_t image_id)
+static unsigned sprite_notes;
+
+static void sprite_note(unsigned bit, const char *message)
 {
+    const char *path;
+    unsigned length = 0;
+    int fd;
+    if (sprite_notes & bit)
+        return;
+    sprite_notes |= bit;
+    path = getenv("RX3_SPRITE_STATUS_PATH");
+    if (!path || !path[0])
+        return;
+    while (message[length])
+        length++;
+    fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0)
+        return;
+    (void)write(fd, message, length);
+    (void)write(fd, "\n", 1);
+    close(fd);
+}
+
+/* the deck named by the anchor, or the other deck when that one has no track.
+   one loaded deck is enough to put the sprite on the waveform. */
+static struct sprite_deck *sprite_pick_state(unsigned preferred)
+{
+    unsigned other;
+    if (preferred < 2u && sprite_decks[preferred].live &&
+        sprite_decks[preferred].frame_count)
+        return &sprite_decks[preferred];
+    other = preferred ^ 1u;
+    if (other < 2u && sprite_decks[other].live && sprite_decks[other].frame_count)
+        return &sprite_decks[other];
+    return 0;
+}
+
+struct sprite_hold {
+    int ready;
+    int force;
+    uint16_t layer;
+    uint32_t image_id;
     uint16_t x1, y1, x2, y2;
+    unsigned area;
+    uint32_t painted_ms;
+    uint8_t model[0x54];
+};
+
+static struct sprite_hold sprite_holds[2];
+
+static void sprite_hold_arm(unsigned deck, const void *image, uint16_t layer,
+                           uint32_t image_id, uint16_t x1, uint16_t y1,
+                           uint16_t x2, uint16_t y2)
+{
+    struct sprite_hold *hold;
+    if (deck > 1u)
+        return;
+    hold = &sprite_holds[deck];
+    if (!hold->ready)
+        sprite_note(deck ? 8u : 4u,
+                    deck ? "sprite learned deck 1" : "sprite learned deck 0");
+    memcpy(hold->model, image, sizeof(hold->model));
+    hold->ready = 1;
+    hold->force = 1;
+    hold->layer = layer;
+    hold->image_id = image_id;
+    hold->x1 = x1;
+    hold->y1 = y1;
+    hold->x2 = x2;
+    hold->y2 = y2;
+}
+
+/* keep the largest waveform-sized box in each stable corner. */
+static void sprite_consider(const void *image, uint16_t layer, uint32_t image_id,
+                           uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
+{
+    int span_x = (int)x2 - (int)x1;
+    int span_y = (int)y2 - (int)y1;
+    unsigned corner;
     unsigned deck;
+    unsigned area;
+    if (image_id == 0u || image_id == 0xffffffffu)
+        return;
+    if (span_x < SPRITE_WAVE_MIN_W || span_y < SPRITE_WAVE_MIN_H)
+        return;
+    corner = sprite_trace_corner(x1, y1, x2, y2);
+    if (corner == 0u)
+        deck = 0u;
+    else if (corner == 3u)
+        deck = 1u;
+    else
+        return;
+    area = (unsigned)span_x * (unsigned)span_y;
+    if (sprite_holds[deck].ready && area <= sprite_holds[deck].area &&
+        sprite_holds[deck].image_id == image_id)
+        return;
+    if (sprite_holds[deck].ready && area < sprite_holds[deck].area)
+        return;
+    sprite_holds[deck].area = area;
+    sprite_hold_arm(deck, image, layer, image_id, x1, y1, x2, y2);
+}
+
+static int sprite_file_deck(uint16_t layer, uint32_t image_id)
+{
+    unsigned index;
+    if (!sprite_anchors_ok)
+        return -1;
+    for (index = 0; index < sprite_anchor_count; index++)
+        if (sprite_anchors[index].layer == layer &&
+            sprite_anchors[index].image_id == image_id)
+            return (int)sprite_anchors[index].deck;
+    return -1;
+}
+
+static void sprite_paint(void *render, const uint8_t *model, unsigned preferred,
+                        uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
+{
     struct sprite_deck *state;
     unsigned frame = 0;
     int left;
     int top;
     int width;
     int height;
-    sprite_take_jobs();
-    memcpy(&x1, (const uint8_t *)image + 0x18u, sizeof(x1));
-    memcpy(&y1, (const uint8_t *)image + 0x1au, sizeof(y1));
-    memcpy(&x2, (const uint8_t *)image + 0x1cu, sizeof(x2));
-    memcpy(&y2, (const uint8_t *)image + 0x1eu, sizeof(y2));
-    if (sprites_trace)
-        sprite_trace(window_layer, image_id, x1, y1, x2, y2);
-    if (sprites_probe)
-        sprite_draw_probe(render, image, x1, y1, x2, y2);
-    if (!sprite_format.ok || !sprite_anchors_ok)
+    state = sprite_pick_state(preferred);
+    if (!state) {
+        sprite_note(1u, "sprite waiting for a track");
         return;
-    for (deck = 0; deck < sprite_anchor_count; deck++) {
-        if (sprite_anchors[deck].layer == window_layer &&
-            sprite_anchors[deck].image_id == image_id)
-            break;
     }
-    if (deck == sprite_anchor_count)
-        return;
-    state = &sprite_decks[sprite_anchors[deck].deck];
-    if (!state->live || state->frame_count == 0u)
-        return;
     if (state->mode == 1u)
         frame = rx3_sprite_fps_frame(now_ms() - state->epoch_ms, state->fps_num,
                                     state->fps_den, state->frame_count);
@@ -905,15 +1059,69 @@ static void sprites_feature_after_image(void *render, void *image,
     }
     width = (int)state->width;
     height = (int)state->height;
-    if ((int)x2 - (int)x1 < width || (int)y2 - (int)y1 < height)
+    /* center the frame on the waveform strip. the strip can be shorter
+       than the frame. a box under 40px on either edge is a glyph. */
+    if ((int)x2 - (int)x1 < SPRITE_WAVE_MIN_H || (int)y2 - (int)y1 < SPRITE_WAVE_MIN_H)
         return;
     left = (int)x1 + (((int)x2 - (int)x1) - width) / 2;
     if (state->anchor == 2u)
         top = (int)y2 - height;
     else
         top = (int)y1 + (((int)y2 - (int)y1) - height) / 2;
-    sprite_draw_model(render, image, state->id0 + frame, left, top,
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (width < 1280 && left > 1280 - width)
+        left = 1280 - width;
+    if (height < 720 && top > 720 - height)
+        top = 720 - height;
+    sprite_note(2u, "sprite drew");
+    sprite_draw_model(render, (void *)model, state->id0 + frame, left, top,
                       left + width, top + height);
+}
+
+static void sprites_feature_after_image(void *render, void *image,
+                                        uint16_t window_layer,
+                                        uint32_t image_id)
+{
+    uint16_t x1, y1, x2, y2;
+    unsigned deck;
+    int file_deck;
+    uint32_t now;
+    sprite_take_jobs();
+    memcpy(&x1, (const uint8_t *)image + 0x18u, sizeof(x1));
+    memcpy(&y1, (const uint8_t *)image + 0x1au, sizeof(y1));
+    memcpy(&x2, (const uint8_t *)image + 0x1cu, sizeof(x2));
+    memcpy(&y2, (const uint8_t *)image + 0x1eu, sizeof(y2));
+    if (sprites_trace)
+        sprite_trace(window_layer, image_id, x1, y1, x2, y2);
+    if (sprites_probe)
+        sprite_draw_probe(render, image, x1, y1, x2, y2);
+    if (!sprite_format.ok)
+        return;
+    sprite_consider(image, window_layer, image_id, x1, y1, x2, y2);
+    file_deck = sprite_file_deck(window_layer, image_id);
+    if (file_deck >= 0) {
+        struct sprite_hold *hold = &sprite_holds[file_deck];
+        unsigned area = (unsigned)((int)x2 - (int)x1) * (unsigned)((int)y2 - (int)y1);
+        /* a larger waveform learned from the screen wins over the file. */
+        if (!hold->ready || hold->image_id == image_id || area >= hold->area)
+            sprite_hold_arm((unsigned)file_deck, image, window_layer, image_id,
+                            x1, y1, x2, y2);
+    }
+    now = now_ms();
+    for (deck = 0; deck < 2u; deck++) {
+        struct sprite_hold *hold = &sprite_holds[deck];
+        if (!hold->ready)
+            continue;
+        if (!hold->force && now - hold->painted_ms < 40u)
+            continue;
+        hold->force = 0;
+        hold->painted_ms = now;
+        sprite_paint(render, hold->model, deck, hold->x1, hold->y1, hold->x2,
+                     hold->y2);
+    }
 }
 
 static void sprites_feature_playhead(unsigned int deck, long position)
@@ -970,8 +1178,42 @@ static int sprites_feature_configured(void)
     return sprites_dir != 0 || sprites_trace || sprites_probe;
 }
 
+static int sprite_start_load(unsigned deck, const char *stem)
+{
+    struct sprite_request *request;
+    pthread_t thread;
+    unsigned index;
+    if (deck >= 2u || !sprites_dir || !stem)
+        return -1;
+    request = mmap(0, 4096u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                   -1, 0);
+    if (request == MAP_FAILED)
+        return -1;
+    memset(request, 0, sizeof(*request));
+    request->deck = deck;
+    request->generation = sprite_decks[deck].generation;
+    for (index = 0; stem[index] && index + 1u < sizeof(request->stem); index++)
+        request->stem[index] = stem[index];
+    request->stem[index] = 0;
+    if (!pthread_create(&thread, 0, sprite_loader, request)) {
+        pthread_detach(thread);
+        return 0;
+    }
+    munmap(request, 4096u);
+    return -1;
+}
+
 static int sprites_feature_install(void)
 {
+    /* a track load used to be the only way in. after a restart the decks
+       are empty, so the pack has to be ready before the next track. */
+    sprite_note(16u, "sprite feature active");
+    if (!sprites_dir)
+        sprite_note(64u, "sprite directory is missing");
+    else {
+        sprite_start_load(0u, "boot");
+        sprite_start_load(1u, "boot");
+    }
     if (original_timestretch_operate)
         return 1;
     original_timestretch_operate = (timestretch_operate_fn)install_hook(
@@ -1026,26 +1268,13 @@ static void sprites_feature_track_will_load(unsigned int deck, void *reader,
 static void sprites_feature_track_did_load(unsigned int deck, void *reader,
                                            const void *track_info)
 {
-    struct sprite_request *request;
-    pthread_t thread;
+    char stem[RX3_SPRITE_NAME_LIMIT + 1u];
     (void)reader;
     if (deck >= 2u || !sprites_dir)
         return;
-    request = mmap(0, 4096u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
-                   -1, 0);
-    if (request == MAP_FAILED)
+    if (rx3_sprite_stem((const char *)track_info, stem, sizeof(stem)))
         return;
-    memset(request, 0, sizeof(*request));
-    request->deck = deck;
-    request->generation = sprite_decks[deck].generation;
-    if (rx3_sprite_stem((const char *)track_info, request->stem, sizeof(request->stem))) {
-        munmap(request, 4096u);
-        return;
-    }
-    if (!pthread_create(&thread, 0, sprite_loader, request))
-        pthread_detach(thread);
-    else
-        munmap(request, 4096u);
+    sprite_start_load(deck, stem);
 }
 
 static void sprites_feature_destroy_deck(unsigned int deck)

@@ -5,7 +5,7 @@ Writes down what happened, onto the stick, so a bug report has something in it.
 
 Off by default. Tick it when something went wrong and you want to know why — or when you are about to open an issue.
 
-It produces `RX3_RUNTIME/session.txt` at the root of the stick. Read it from your computer; the last line of a good run is:
+Each boot writes a new file. The player has no clock, so a file's date does not tell you whether it is new. Read `RX3_RUNTIME/latest.txt` first. It names `session-0007.txt` and a random id. The session file's first line is that same `boot 7 id ...`. A boot that did not write leaves `latest.txt` unchanged. The last line of a good run is:
 
 ```text
 === complete ===
@@ -19,7 +19,7 @@ It produces `RX3_RUNTIME/session.txt` at the root of the stick. Read it from you
 | `STOP: ...` | Something was not as expected, so **nothing was touched**. |
 | `FAILED: ...` | Something went wrong partway, and the previous state was put back. |
 
-The previous run is kept alongside as `session-previous.txt`, because the usual way to check whether a fix worked is to insert the stick again — which would otherwise overwrite the very log you wanted to read.
+Older boots stay on the stick as `session-0001.txt`, `session-0002.txt`, and so on. `boot.seq` is the count. The player's own output is `rbp-stdout-0007.txt` for the same boot.
 
 > [!WARNING]
 > **Eject the drive from the RX3. Do not just pull it out.**
