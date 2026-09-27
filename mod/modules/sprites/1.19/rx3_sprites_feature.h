@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: MPL-2.0
  * usb sprite overlays for firmware 1.19.
- * draws only through pal_draw_image, right after rbp draws a proven anchor
- * image. packs are 8-bit indexed; the player expands each frame to the same
- * rgb565 record the custom tabs use, because record format 2 is direct rgb565
- * and reads the index bytes as pixels. index 0 becomes the key colour, and the
- * draw model's colour key (rbp's "ban colour") skips those pixels.
- * anything unproven leaves the stock image untouched.
+ * rbp draws the scrolling waveforms into its own ds_gr window, and its
+ * compositor puts that window above every ns window, so an image drawn
+ * through pal_draw_image can never show over the waveform. each deck gets a
+ * small ds_gr window of its own instead, placed on the deck's waveform strip
+ * with a z above rbp's waveform window. packs are 8-bit indexed; the player
+ * expands each frame to rgb565, index 0 becomes magenta, and the window's
+ * colour key lets the waveform show through those pixels.
  */
 
 #ifndef RX3_SPRITES_FEATURE_H
@@ -13,20 +14,47 @@
 
 #include "rx3_sprites_logic.h"
 
-#define SPRITE_ID_FIRST 0x1604u
-#define SPRITE_ID_COUNT 255u
-#define SPRITE_PROBE_ID 0x1703u
 #define SPRITE_PACK_LIMIT 64u
-#define SPRITE_MEMORY_CEILING (2u * 1024u * 1024u)
 #define SPRITE_FILE_LIMIT (1024u * 1024u)
-#define SPRITE_TRACE_LIMIT 96u
-#define SPRITE_WAVE_MIN_W 200
-#define SPRITE_WAVE_MIN_H 40
-/* magenta. model +0x48 holds it as 0x00bbggrr, and the renderer compares it
-   against each rgb565 pixel. */
 #define SPRITE_KEY_RGB565 0xf81fu
-#define SPRITE_KEY_MODEL 0x00ff00ffu
+#define SPRITE_KEY_ARGB 0xffff00ffu
+#define SPRITE_FRAME_MS 33u
+#define SPRITE_RETRY_MS 1000u
 
+/* ds_gr window api, see ui_PLAYMODE_Set for rbp's own use. */
+#define DS_GR_CREATE_WINDOW ((unsigned long)0x001a2634)
+#define DS_GR_DESTROY_WINDOW ((unsigned long)0x001a2990)
+#define DS_GR_LOCK_WINDOW ((unsigned long)0x001a1c48)
+#define DS_GR_UNLOCK_WINDOW ((unsigned long)0x001a1cb0)
+#define DS_GR_SET_WINDOW_OPTION ((unsigned long)0x001a061c)
+#define DS_GR_SET_WINDOW_COLOR ((unsigned long)0x001a0680)
+#define DS_GR_FORMAT_RGB565 9u
+#define DS_GR_OPTION_SET 1u
+#define DS_GR_OPTION_VISIBLE 8u
+#define DS_GR_COLOR_KEY 2u
+#define DS_GR_Z_TAKEN 4
+
+/* rbp's scrolling waveform window: both decks in one 892x444 window at
+   (190, 47), deck 0 in the top 222 rows. the handle is 0 whenever the
+   waveform screen is not built. the per-deck words are non-zero while that
+   deck has waveform data. */
+#define WAVE_WINDOW_ID ((unsigned long)0x02498d44)
+#define WAVE_DECK0_DATA ((unsigned long)0x05902198)
+#define WAVE_DECK1_DATA ((unsigned long)0x05930fb4)
+#define WAVE_LEFT 190
+#define WAVE_TOP 47
+#define WAVE_WIDTH 892
+#define WAVE_STRIP 222
+
+typedef int (*ds_gr_create_window_fn)(void **window, uint32_t *info);
+typedef int (*ds_gr_window_fn)(void *window);
+typedef int (*ds_gr_lock_window_fn)(void *window, void **pixels, int *pitch);
+typedef int (*ds_gr_set_option_fn)(void *window, uint32_t mode, uint32_t bits);
+typedef int (*ds_gr_set_color_fn)(void *window, uint32_t kind, uint32_t colour);
+
+/* free z slots under rbp's waveform (0x4f) and counter windows (0x41-0x4e).
+   a lower z composites later, so on top. */
+static const uint32_t sprite_z_slots[] = { 0x3eu, 0x3du, 0x3cu, 0x3bu };
 struct __attribute__((packed)) rx3_sprite_file_header {
     char magic[8];
     uint16_t version;
@@ -55,21 +83,6 @@ struct __attribute__((packed)) rx3_sprite_file_header {
 _Static_assert(sizeof(struct rx3_sprite_file_header) == 50,
                "sprite header drifted from the host compiler");
 
-struct rx3_format_proof {
-    unsigned format_byte;
-    unsigned palette;
-    unsigned bpp;
-    unsigned transparent;
-    unsigned entry_size;
-    int ok;
-};
-
-struct rx3_anchor {
-    unsigned layer;
-    unsigned image_id;
-    unsigned deck;
-};
-
 struct sprite_job {
     unsigned deck;
     unsigned generation;
@@ -83,7 +96,6 @@ struct sprite_job {
     unsigned beats_per_loop;
     unsigned anchor;
     unsigned palette_count;
-    unsigned id0;
     unsigned pixel_bytes;
     uint8_t *palette;
     uint8_t *pixels;
@@ -110,7 +122,8 @@ struct sprite_deck {
     unsigned frames_per_beat;
     unsigned beats_per_loop;
     unsigned anchor;
-    unsigned id0;
+    uint16_t *frames;
+    size_t frames_bytes;
     unsigned epoch_ms;
     int have_phase;
     uint32_t phase_milli;
@@ -118,29 +131,25 @@ struct sprite_deck {
     char previous[48];
 };
 
+/* one overlay window per deck. shown is the frame last blitted, or -1. */
+struct sprite_window {
+    void *handle;
+    int x;
+    int y;
+    unsigned width;
+    unsigned height;
+    int shown;
+    unsigned failed_ms;
+};
+
 static const char *sprites_dir;
 static uint32_t sprites_nonce = 1u;
-static int sprites_trace;
-static int sprites_probe;
 static int sprites_owns_timestretch;
-static unsigned sprite_next_id = SPRITE_ID_FIRST;
-static unsigned sprite_bytes_used;
 static struct sprite_deck sprite_decks[2];
 static struct sprite_job *volatile sprite_jobs[2];
-static struct rx3_format_proof sprite_format;
-static struct rx3_anchor sprite_anchors[16];
-static unsigned sprite_anchor_count;
-static int sprite_anchors_ok;
+static struct sprite_window sprite_windows[2];
+static unsigned sprite_tick_ms;
 static unsigned sprite_logged;
-static uint8_t *sprite_probe_pixels;
-static uint8_t *sprite_probe_palette;
-static void *sprite_probe_block;
-static size_t sprite_probe_block_bytes;
-static int sprite_probe_ready;
-static unsigned sprite_probe_drawn_ms;
-static void *sprite_kept[32];
-static size_t sprite_kept_bytes[32];
-static unsigned sprite_kept_count;
 
 static void *sprite_slurp(const char *path, size_t *size_out, size_t limit)
 {
@@ -227,138 +236,8 @@ static void sprite_log_once(unsigned bit, const char *message)
     log_line(message);
 }
 
-static int sprite_keep(void *block, size_t bytes)
-{
-    if (!block || !bytes)
-        return -1;
-    if (sprite_kept_count >= 32u ||
-        sprite_bytes_used + bytes > SPRITE_MEMORY_CEILING) {
-        sprite_log_once(1u, "sprites disabled: sprite memory ceiling");
-        return -1;
-    }
-    sprite_kept[sprite_kept_count] = block;
-    sprite_kept_bytes[sprite_kept_count] = bytes;
-    sprite_kept_count++;
-    sprite_bytes_used += (unsigned)bytes;
-    return 0;
-}
 
-static void sprite_release_all(void)
-{
-    unsigned index;
-    for (index = 0; index < sprite_kept_count; index++)
-        munmap(sprite_kept[index], sprite_kept_bytes[index]);
-    sprite_kept_count = 0u;
-    sprite_bytes_used = 0u;
-    if (sprite_probe_block && sprite_probe_block_bytes) {
-        munmap(sprite_probe_block, sprite_probe_block_bytes);
-        sprite_probe_block = 0;
-        sprite_probe_block_bytes = 0u;
-    }
-}
-
-static int sprite_parse_format(const char *text, size_t length,
-                              struct rx3_format_proof *proof)
-{
-    unsigned values[5];
-    unsigned count = 0;
-    size_t cursor = 0;
-    static const char *keys[5] = {
-        "format ", "palette ", "bpp ", "transparent ", "entry "
-    };
-    if (length < 8 || memcmp(text, "RX3FMT1\n", 8))
-        return -1;
-    cursor = 8;
-    while (cursor < length && count < 5u) {
-        unsigned value = 0;
-        size_t key_length = str_length(keys[count]);
-        if (cursor + key_length >= length ||
-            memcmp(text + cursor, keys[count], key_length))
-            return -1;
-        cursor += key_length;
-        if (cursor >= length || text[cursor] < '0' || text[cursor] > '9')
-            return -1;
-        while (cursor < length && text[cursor] >= '0' && text[cursor] <= '9') {
-            value = value * 10u + (unsigned)(text[cursor] - '0');
-            cursor++;
-        }
-        if (cursor >= length || text[cursor] != '\n')
-            return -1;
-        values[count++] = value;
-        cursor++;
-    }
-    if (count != 5u || cursor != length)
-        return -1;
-    /* the pack encoding: format 2, palette, 8 bpp, transparent index 0,
-       16-bit rgb565 entries. the player expands it, see sprite_install_job. */
-    if (values[0] != 2u || values[1] != 1u || values[2] != 8u ||
-        values[3] != 0u || values[4] != 2u)
-        return -1;
-    proof->format_byte = values[0];
-    proof->palette = values[1];
-    proof->bpp = values[2];
-    proof->transparent = values[3];
-    proof->entry_size = values[4];
-    proof->ok = 1;
-    return 0;
-}
-
-static int sprite_parse_anchors(const char *text, size_t length)
-{
-    size_t cursor = 0;
-    sprite_anchor_count = 0u;
-    sprite_anchors_ok = 0;
-    if (length < 8 || memcmp(text, "RX3ANC1\n", 8))
-        return -1;
-    cursor = 8;
-    while (cursor < length) {
-        unsigned layer = 0;
-        unsigned image_id = 0;
-        unsigned deck = 0;
-        unsigned index;
-        if (sprite_anchor_count >= 16u)
-            return -1;
-        if (cursor + 6 >= length || memcmp(text + cursor, "layer ", 6))
-            return -1;
-        cursor += 6;
-        while (cursor < length && text[cursor] >= '0' && text[cursor] <= '9') {
-            layer = layer * 10u + (unsigned)(text[cursor] - '0');
-            cursor++;
-        }
-        if (cursor + 4 >= length || memcmp(text + cursor, " id ", 4))
-            return -1;
-        cursor += 4;
-        while (cursor < length && text[cursor] >= '0' && text[cursor] <= '9') {
-            image_id = image_id * 10u + (unsigned)(text[cursor] - '0');
-            cursor++;
-        }
-        if (cursor + 6 >= length || memcmp(text + cursor, " deck ", 6))
-            return -1;
-        cursor += 6;
-        if (cursor >= length || (text[cursor] != '0' && text[cursor] != '1'))
-            return -1;
-        deck = (unsigned)(text[cursor] - '0');
-        cursor++;
-        if (cursor >= length || text[cursor] != '\n')
-            return -1;
-        cursor++;
-        for (index = 0; index < sprite_anchor_count; index++)
-            if (sprite_anchors[index].layer == layer &&
-                sprite_anchors[index].image_id == image_id)
-                return -1;
-        sprite_anchors[sprite_anchor_count].layer = layer;
-        sprite_anchors[sprite_anchor_count].image_id = image_id;
-        sprite_anchors[sprite_anchor_count].deck = deck;
-        sprite_anchor_count++;
-    }
-    if (!sprite_anchor_count)
-        return -1;
-    sprite_anchors_ok = 1;
-    return 0;
-}
-
-static int sprite_header_ok(struct rx3_sprite_file_header *header, size_t size,
-                           const struct rx3_format_proof *proof)
+static int sprite_header_ok(struct rx3_sprite_file_header *header, size_t size)
 {
     uint32_t digest;
     uint32_t stored;
@@ -381,9 +260,11 @@ static int sprite_header_ok(struct rx3_sprite_file_header *header, size_t size,
         header->height < 1u || header->height > 64u ||
         header->frame_count < 1u || header->frame_count > 16u)
         return -1;
-    if (!proof->ok || header->format_byte != proof->format_byte ||
-        header->palette_flag != 1u || header->transparent != 0u ||
-        header->bpp != proof->bpp || header->entry_size != 2u)
+    /* the one pack encoding: 8-bit indices into rgb565 entries, index 0
+       transparent. */
+    if (header->format_byte != 2u || header->palette_flag != 1u ||
+        header->transparent != 0u || header->bpp != 8u ||
+        header->entry_size != 2u)
         return -1;
     stored = header->checksum;
     header->checksum = 0u;
@@ -419,39 +300,6 @@ static int sprite_header_ok(struct rx3_sprite_file_header *header, size_t size,
     return (int)frame_bytes;
 }
 
-static int sprite_load_proofs(void)
-{
-    char path[512];
-    size_t size = 0;
-    void *block;
-    if (sprite_format.ok && sprite_anchors_ok)
-        return 0;
-    if (sprite_join(path, sizeof(path), "format.proof"))
-        return -1;
-    block = sprite_slurp(path, &size, 256u);
-    if (!block || sprite_parse_format(block, size, &sprite_format)) {
-        if (block)
-            munmap(block, size);
-        sprite_log_once(2u, "sprites disabled: hard-mask format is not proven");
-        return -1;
-    }
-    munmap(block, size);
-    if (sprite_join(path, sizeof(path), "anchors.proof")) {
-        sprite_log_once(4u, "sprites disabled: waveform anchor is not proven");
-        return 0;
-    }
-    block = sprite_slurp(path, &size, 2048u);
-    if (!block || sprite_parse_anchors(block, size)) {
-        if (block)
-            munmap(block, size);
-        sprite_anchors_ok = 0;
-        sprite_log_once(4u, "sprites disabled: waveform anchor is not proven");
-        return 0;
-    }
-    munmap(block, size);
-    log_line("sprite hard-mask proof ok");
-    return 0;
-}
 
 /* the player beat clock is not wired until a firmware-1.19 log proves the field.
  * do not guess an address. a failed read leaves beat-mode packs undrawn. */
@@ -500,8 +348,6 @@ static void *sprite_loader(void *opaque)
     int frame_bytes;
     struct sprite_job *job;
 
-    if (sprite_load_proofs())
-        goto done;
     if (sprite_join(path, sizeof(path), "catalog.txt"))
         goto done;
     catalog = sprite_slurp(path, &catalog_size, 8192u);
@@ -564,7 +410,7 @@ static void *sprite_loader(void *opaque)
     if (!pack)
         goto release_catalog;
     header = (struct rx3_sprite_file_header *)pack;
-    frame_bytes = sprite_header_ok(header, pack_size, &sprite_format);
+    frame_bytes = sprite_header_ok(header, pack_size);
     if (frame_bytes < 0) {
         sprite_log_once(16u, "sprites disabled: pack failed validation");
         munmap(pack, pack_size);
@@ -643,77 +489,39 @@ static uint16_t *sprite_expand(const struct sprite_job *job, size_t *bytes_out)
     return output;
 }
 
-static int sprite_install_job(struct sprite_job *job)
+static void sprite_drop_frames(struct sprite_deck *state)
 {
-    uint8_t *table;
-    unsigned frame;
-    unsigned long available;
-    uint16_t *expanded;
-    size_t expanded_bytes = 0;
-    if (!tab_assets_ready)
-        return -1;
-    if (sprite_next_id + job->frame_count > SPRITE_ID_FIRST + SPRITE_ID_COUNT)
-        return -1;
-    available = memory_available_kb();
-    if (available && job->block_bytes > available * 1024u / 5u)
-        return -1;
-    table = *(uint8_t **)IMAGE_TABLE_POINTER;
-    if (!table)
-        return -1;
-    expanded = sprite_expand(job, &expanded_bytes);
-    if (!expanded)
-        return -1;
-    if (sprite_keep(expanded, expanded_bytes)) {
-        munmap(expanded, expanded_bytes);
-        return -1;
-    }
-    munmap(job->block, job->block_bytes);
-    job->block = 0;
-    job->id0 = sprite_next_id;
-    for (frame = 0; frame < job->frame_count; frame++) {
-        uint8_t *record = table + (job->id0 + frame) * 44u;
-        uint16_t width = (uint16_t)job->width;
-        uint16_t height = (uint16_t)job->height;
-        uint16_t *pixels = expanded + (size_t)frame * job->width * job->height;
-        uint32_t pixel_off = (uint32_t)(unsigned long)pixels -
-                             (uint32_t)(unsigned long)table;
-        uint32_t no_palette = 0u;
-        memcpy(record, table + 0x1598u * 44u, 44u);
-        memcpy(record + 4u, &width, sizeof(width));
-        memcpy(record + 6u, &height, sizeof(height));
-        record[0x18u] = 1u; /* rgb565, as the custom tabs */
-        record[0x19u] = 0u;
-        memcpy(record + 0x20u, &pixel_off, sizeof(pixel_off));
-        memcpy(record + 0x24u, &no_palette, sizeof(no_palette));
-    }
-    sprite_next_id = job->id0 + job->frame_count;
-    return 0;
+    if (state->frames)
+        munmap(state->frames, state->frames_bytes);
+    state->frames = 0;
+    state->frames_bytes = 0;
 }
 
+/* runs on rbp's ui thread, the only thread that reads the frames. */
 static void sprite_take_jobs(void)
 {
     unsigned deck;
     for (deck = 0; deck < 2u; deck++) {
         struct sprite_job *job = sprite_jobs[deck];
         struct sprite_deck *state;
+        uint16_t *frames;
+        size_t frames_bytes = 0;
         if (!job)
             continue;
         if (!__sync_bool_compare_and_swap(&sprite_jobs[deck], job, 0))
             continue;
         state = &sprite_decks[deck];
-        /* the image table appears on the first tab draw. keep the pack
-           until that has happened. */
-        if (!tab_assets_ready) {
-            sprite_jobs[deck] = job;
-            continue;
-        }
-        if (job->generation != state->generation || sprite_install_job(job)) {
-            sprite_log_once(32u, "sprites disabled: image install failed");
-            if (job->block)
-                munmap(job->block, job->block_bytes);
+        frames = job->generation == state->generation
+                     ? sprite_expand(job, &frames_bytes)
+                     : 0;
+        munmap(job->block, job->block_bytes);
+        if (!frames) {
+            if (job->generation == state->generation)
+                sprite_log_once(32u, "sprites disabled: frame expansion failed");
             munmap(job, 4096u);
             continue;
         }
+        sprite_drop_frames(state);
         state->live = 1;
         state->frame_count = job->frame_count;
         state->width = job->width;
@@ -724,7 +532,8 @@ static void sprite_take_jobs(void)
         state->frames_per_beat = job->frames_per_beat;
         state->beats_per_loop = job->beats_per_loop;
         state->anchor = job->anchor;
-        state->id0 = job->id0;
+        state->frames = frames;
+        state->frames_bytes = frames_bytes;
         state->epoch_ms = now_ms();
         state->have_phase = 0;
         state->phase_milli = 0;
@@ -732,237 +541,6 @@ static void sprite_take_jobs(void)
         memcpy(state->name, job->name, sizeof(state->name));
         munmap(job, 4096u);
     }
-}
-
-static void sprite_draw_model(void *render, void *image, unsigned image_id,
-                             int x1, int y1, int x2, int y2)
-{
-    uint8_t model[0x54];
-    uint16_t box[4];
-    if (x2 <= x1 || y2 <= y1)
-        return;
-    memcpy(model, image, sizeof(model));
-    box[0] = (uint16_t)x1;
-    box[1] = (uint16_t)y1;
-    box[2] = (uint16_t)x2;
-    box[3] = (uint16_t)y2;
-    memcpy(model + 0x18u, box, sizeof(box));
-    set_u32(model, 0x44u, image_id);
-    set_u32(model, 0x48u, SPRITE_KEY_MODEL);
-    model[0x4cu] |= 1u;
-    sprite_overlay_draw = 1;
-    original_draw_image(render, model);
-    sprite_overlay_draw = 0;
-}
-
-static char sprite_trace_path[512];
-
-static const char *sprite_trace_file(void)
-{
-    const char *path;
-    unsigned index;
-    if (sprite_trace_path[0])
-        return sprite_trace_path;
-    path = getenv("RX3_SPRITE_TRACE_PATH");
-    if (!path || !path[0])
-        path = "/tmp/rx3-sprite-trace.log";
-    for (index = 0; path[index] && index + 1u < sizeof(sprite_trace_path); index++)
-        sprite_trace_path[index] = path[index];
-    sprite_trace_path[index] = 0;
-    return sprite_trace_path;
-}
-
-/* 0 upper left, 1 upper right, 2 lower left, 3 lower right.
-   only 0 and 3 name the same deck in both waveform layouts. */
-static unsigned sprite_trace_corner(uint16_t x1, uint16_t y1, uint16_t x2,
-                                   uint16_t y2)
-{
-    unsigned center_x = ((unsigned)x1 + (unsigned)x2) / 2u;
-    unsigned center_y = ((unsigned)y1 + (unsigned)y2) / 2u;
-    unsigned right = center_x >= 640u;
-    unsigned bottom = center_y >= 360u;
-    return (bottom << 1) | right;
-}
-
-static void sprite_trace(uint16_t layer, uint32_t image_id, uint16_t x1,
-                        uint16_t y1, uint16_t x2, uint16_t y2)
-{
-    static uint16_t layers[SPRITE_TRACE_LIMIT];
-    static uint32_t ids[SPRITE_TRACE_LIMIT];
-    static uint8_t corners[SPRITE_TRACE_LIMIT];
-    static unsigned seen;
-    unsigned index;
-    unsigned corner;
-    char line[96];
-    unsigned length = 0;
-    int fd;
-    int span_x = (int)x2 - (int)x1;
-    int span_y = (int)y2 - (int)y1;
-    /* icons used to fill the log before a waveform was drawn. */
-    if (image_id == 0u || image_id == 0xffffffffu)
-        return;
-    if (span_x < SPRITE_WAVE_MIN_W || span_y < SPRITE_WAVE_MIN_H)
-        return;
-    if (seen >= SPRITE_TRACE_LIMIT)
-        return;
-    corner = sprite_trace_corner(x1, y1, x2, y2);
-    for (index = 0; index < seen; index++)
-        if (layers[index] == layer && ids[index] == image_id &&
-            corners[index] == corner)
-            return;
-    layers[seen] = layer;
-    ids[seen] = image_id;
-    corners[seen] = (uint8_t)corner;
-    seen++;
-    /* bounded decimal line. one record per layer, image, and corner. */
-    length = 0;
-    {
-        unsigned values[6];
-        unsigned value_index;
-        values[0] = layer;
-        values[1] = image_id;
-        values[2] = x1;
-        values[3] = y1;
-        values[4] = x2;
-        values[5] = y2;
-        for (value_index = 0; value_index < 6u; value_index++) {
-            char digits[16];
-            unsigned digit_count = 0;
-            unsigned value = values[value_index];
-            if (value_index && length + 1u < sizeof(line))
-                line[length++] = ' ';
-            if (!value)
-                digits[digit_count++] = '0';
-            while (value && digit_count < sizeof(digits)) {
-                digits[digit_count++] = (char)('0' + rx3_umod(value, 10u));
-                value /= 10u;
-            }
-            while (digit_count && length + 1u < sizeof(line))
-                line[length++] = digits[--digit_count];
-        }
-    }
-    if (length + 1u < sizeof(line))
-        line[length++] = '\n';
-    fd = open(sprite_trace_file(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (fd < 0)
-        return;
-    (void)write(fd, line, length);
-    close(fd);
-}
-
-static int sprite_prepare_probe(void)
-{
-    char path[512];
-    size_t spec_size = 0;
-    size_t bin_size = 0;
-    void *spec;
-    uint8_t *binary;
-    struct rx3_format_proof proof;
-    unsigned palette_bytes;
-    if (sprite_probe_ready || !sprites_probe)
-        return 0;
-    if (sprite_join(path, sizeof(path), "probe.spec"))
-        return -1;
-    spec = sprite_slurp(path, &spec_size, 256u);
-    if (!spec || sprite_parse_format(spec, spec_size, &proof)) {
-        if (spec)
-            munmap(spec, spec_size);
-        sprite_log_once(64u, "sprite hard-mask probe FAILED");
-        sprites_probe = 0;
-        return -1;
-    }
-    munmap(spec, spec_size);
-    if (sprite_join(path, sizeof(path), "probe.bin"))
-        return -1;
-    binary = sprite_slurp(path, &bin_size, 4096u);
-    palette_bytes = 2u * proof.entry_size;
-    if (!binary || bin_size < palette_bytes + 64u || proof.bpp != 8u) {
-        if (binary)
-            munmap(binary, bin_size);
-        sprite_log_once(64u, "sprite hard-mask probe FAILED");
-        sprites_probe = 0;
-        return -1;
-    }
-    if (binary[0] != 0 || binary[palette_bytes] != 0 ||
-        binary[palette_bytes + 7u] != 0 || binary[palette_bytes + 56u] != 0 ||
-        binary[palette_bytes + 63u] != 0 || binary[palette_bytes + 27u] == 0) {
-        munmap(binary, bin_size);
-        sprite_log_once(64u, "sprite hard-mask probe FAILED");
-        sprites_probe = 0;
-        return -1;
-    }
-    sprite_probe_block = binary;
-    sprite_probe_block_bytes = bin_size;
-    sprite_probe_palette = binary;
-    sprite_probe_pixels = binary + palette_bytes;
-    sprite_probe_ready = 1;
-    log_line("sprite hard-mask probe armed");
-    return 0;
-}
-
-static int sprite_probe_record_ready;
-
-static void sprite_draw_probe(void *render, void *image, uint16_t x1,
-                             uint16_t y1, uint16_t x2, uint16_t y2)
-{
-    uint8_t *table;
-    uint8_t *record;
-    uint16_t eight = 8u;
-    uint32_t pixel_off;
-    uint32_t palette_off;
-    int width;
-    int height;
-    unsigned now;
-    if (!sprite_probe_ready && sprite_prepare_probe())
-        return;
-    if (!sprite_probe_ready || !tab_assets_ready)
-        return;
-    width = (int)x2 - (int)x1;
-    height = (int)y2 - (int)y1;
-    now = now_ms();
-    if (width < 200 || height < 40 || now - sprite_probe_drawn_ms < 200u)
-        return;
-    table = *(uint8_t **)IMAGE_TABLE_POINTER;
-    if (!table)
-        return;
-    if (!sprite_probe_record_ready) {
-        uint8_t format_byte = (uint8_t)sprite_format.format_byte;
-        record = table + SPRITE_PROBE_ID * 44u;
-        if (!sprite_format.ok) {
-            struct rx3_format_proof proof;
-            char path[512];
-            size_t spec_size = 0;
-            void *spec;
-            memset(&proof, 0, sizeof(proof));
-            if (sprite_join(path, sizeof(path), "probe.spec"))
-                return;
-            spec = sprite_slurp(path, &spec_size, 256u);
-            if (!spec || sprite_parse_format(spec, spec_size, &proof)) {
-                if (spec)
-                    munmap(spec, spec_size);
-                return;
-            }
-            munmap(spec, spec_size);
-            format_byte = (uint8_t)proof.format_byte;
-        }
-        memcpy(record, table + 0x1598u * 44u, 44u);
-        memcpy(record + 4u, &eight, sizeof(eight));
-        memcpy(record + 6u, &eight, sizeof(eight));
-        record[0x18u] = format_byte;
-        pixel_off = (uint32_t)(unsigned long)sprite_probe_pixels -
-                    (uint32_t)(unsigned long)table;
-        palette_off = (uint32_t)(unsigned long)sprite_probe_palette -
-                      (uint32_t)(unsigned long)table;
-        record[0x19u] = 1u;
-        memcpy(record + 0x20u, &pixel_off, sizeof(pixel_off));
-        memcpy(record + 0x24u, &palette_off, sizeof(palette_off));
-        sprite_probe_record_ready = 1;
-    }
-    sprite_probe_drawn_ms = now;
-    sprite_draw_model(render, image,
-                      SPRITE_PROBE_ID,
-                      x1 + width / 2 - 4, y1 + height / 2 - 4,
-                      x1 + width / 2 + 4, y1 + height / 2 + 4);
 }
 
 static unsigned sprite_notes;
@@ -988,108 +566,166 @@ static void sprite_note(unsigned bit, const char *message)
     close(fd);
 }
 
-/* the deck named by the anchor, or the other deck when that one has no track.
-   one loaded deck is enough to put the sprite on the waveform. */
-static struct sprite_deck *sprite_pick_state(unsigned preferred)
-{
-    unsigned other;
-    if (preferred < 2u && sprite_decks[preferred].live &&
-        sprite_decks[preferred].frame_count)
-        return &sprite_decks[preferred];
-    other = preferred ^ 1u;
-    if (other < 2u && sprite_decks[other].live && sprite_decks[other].frame_count)
-        return &sprite_decks[other];
-    return 0;
-}
 
-static int sprite_file_deck(uint16_t layer, uint32_t image_id)
+static int sprite_frame_now(const struct sprite_deck *state, unsigned *frame)
 {
-    unsigned index;
-    if (!sprite_anchors_ok)
-        return -1;
-    for (index = 0; index < sprite_anchor_count; index++)
-        if (sprite_anchors[index].layer == layer &&
-            sprite_anchors[index].image_id == image_id)
-            return (int)sprite_anchors[index].deck;
+    if (state->mode == 1u) {
+        *frame = rx3_sprite_fps_frame(now_ms() - state->epoch_ms, state->fps_num,
+                                     state->fps_den, state->frame_count);
+        return 0;
+    }
+    if (state->mode == 2u &&
+        !rx3_sprite_phase_frame(state->have_phase, state->phase_milli,
+                                state->frames_per_beat, state->beats_per_loop,
+                                state->frame_count, frame))
+        return 0;
+    sprite_log_once(128u, "sprites: beat clock unavailable");
     return -1;
 }
 
-static void sprite_paint(void *render, const uint8_t *model, unsigned preferred,
-                        uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
+/* centred on the deck's strip, or resting on its bottom edge for anchor 2. */
+static void sprite_place(unsigned deck, const struct sprite_deck *state,
+                         int *x, int *y)
 {
-    struct sprite_deck *state;
-    unsigned frame = 0;
-    int left;
-    int top;
-    int width;
-    int height;
-    state = sprite_pick_state(preferred);
-    if (!state) {
-        sprite_note(1u, "sprite waiting for a track");
-        return;
-    }
-    if (state->mode == 1u)
-        frame = rx3_sprite_fps_frame(now_ms() - state->epoch_ms, state->fps_num,
-                                    state->fps_den, state->frame_count);
-    else if (state->mode == 2u) {
-        if (rx3_sprite_phase_frame(state->have_phase, state->phase_milli,
-                                  state->frames_per_beat, state->beats_per_loop,
-                                  state->frame_count, &frame)) {
-            sprite_log_once(128u, "sprites: beat clock unavailable");
-            return;
-        }
-    } else {
-        return;
-    }
-    width = (int)state->width;
-    height = (int)state->height;
-    /* center the frame on the waveform strip. the strip can be shorter
-       than the frame. a box under 40px on either edge is a glyph. */
-    if ((int)x2 - (int)x1 < SPRITE_WAVE_MIN_H || (int)y2 - (int)y1 < SPRITE_WAVE_MIN_H)
-        return;
-    left = (int)x1 + (((int)x2 - (int)x1) - width) / 2;
+    int strip_top = WAVE_TOP + (int)deck * WAVE_STRIP;
+    *x = WAVE_LEFT + (WAVE_WIDTH - (int)state->width) / 2;
     if (state->anchor == 2u)
-        top = (int)y2 - height;
+        *y = strip_top + WAVE_STRIP - (int)state->height;
     else
-        top = (int)y1 + (((int)y2 - (int)y1) - height) / 2;
-    if (left < 0)
-        left = 0;
-    if (top < 0)
-        top = 0;
-    if (width < 1280 && left > 1280 - width)
-        left = 1280 - width;
-    if (height < 720 && top > 720 - height)
-        top = 720 - height;
-    sprite_note(2u, "sprite drew");
-    sprite_draw_model(render, (void *)model, state->id0 + frame, left, top,
-                      left + width, top + height);
+        *y = strip_top + (WAVE_STRIP - (int)state->height) / 2;
 }
 
+static void sprite_window_close(struct sprite_window *window)
+{
+    if (window->handle)
+        ((ds_gr_window_fn)DS_GR_DESTROY_WINDOW)(window->handle);
+    window->handle = 0;
+    window->shown = -1;
+}
+
+/* same window setup as rbp's waveform: rgb565 on plane 0, visible, with
+   magenta keyed out. tries each free z until one is not taken. */
+static int sprite_window_open(struct sprite_window *window, int x, int y,
+                              unsigned width, unsigned height)
+{
+    unsigned slot;
+    for (slot = 0; slot < sizeof(sprite_z_slots) / sizeof(sprite_z_slots[0]);
+         slot++) {
+        uint32_t info[13];
+        void *handle = 0;
+        int result;
+        memset(info, 0, sizeof(info));
+        info[2] = (uint32_t)width | ((uint32_t)height << 16);
+        info[3] = DS_GR_FORMAT_RGB565;
+        info[4] = 0u;
+        info[5] = sprite_z_slots[slot];
+        info[7] = (uint32_t)x;
+        info[8] = (uint32_t)y;
+        result = ((ds_gr_create_window_fn)DS_GR_CREATE_WINDOW)(&handle, info);
+        if (result == DS_GR_Z_TAKEN)
+            continue;
+        if (result || !handle)
+            return -1;
+        ((ds_gr_set_option_fn)DS_GR_SET_WINDOW_OPTION)(handle, DS_GR_OPTION_SET,
+                                                       DS_GR_OPTION_VISIBLE);
+        ((ds_gr_set_option_fn)DS_GR_SET_WINDOW_OPTION)(handle, DS_GR_OPTION_SET,
+                                                       1u);
+        ((ds_gr_set_color_fn)DS_GR_SET_WINDOW_COLOR)(handle, DS_GR_COLOR_KEY,
+                                                     SPRITE_KEY_ARGB);
+        window->handle = handle;
+        window->x = x;
+        window->y = y;
+        window->width = width;
+        window->height = height;
+        window->shown = -1;
+        return 0;
+    }
+    return -1;
+}
+
+/* copies one frame into the window. setting the visible option again is what
+   marks the window dirty for rbp's compositor. */
+static void sprite_window_blit(struct sprite_window *window,
+                               const struct sprite_deck *state, unsigned frame)
+{
+    const uint16_t *source =
+        state->frames + (size_t)frame * state->width * state->height;
+    uint8_t *pixels = 0;
+    int pitch = 0;
+    unsigned row;
+    if (((ds_gr_lock_window_fn)DS_GR_LOCK_WINDOW)(window->handle,
+                                                  (void **)&pixels, &pitch))
+        return;
+    if (pixels && pitch >= (int)(state->width * 2u)) {
+        for (row = 0; row < state->height; row++)
+            memcpy(pixels + (size_t)row * (unsigned)pitch,
+                   source + (size_t)row * state->width, state->width * 2u);
+        ((ds_gr_set_option_fn)DS_GR_SET_WINDOW_OPTION)(
+            window->handle, DS_GR_OPTION_SET, DS_GR_OPTION_VISIBLE);
+        window->shown = (int)frame;
+    }
+    ((ds_gr_window_fn)DS_GR_UNLOCK_WINDOW)(window->handle);
+}
+
+static int sprite_deck_has_wave(unsigned deck)
+{
+    return *(volatile int *)(deck ? WAVE_DECK1_DATA : WAVE_DECK0_DATA) != 0;
+}
+
+/* keeps each deck's window in step with the waveform screen: open while the
+   screen is up and the deck has a sprite and a waveform, closed otherwise. */
+static void sprite_update_deck(unsigned deck, int screen_up, unsigned now)
+{
+    struct sprite_deck *state = &sprite_decks[deck];
+    struct sprite_window *window = &sprite_windows[deck];
+    unsigned frame = 0;
+    int x;
+    int y;
+    if (!screen_up || !state->live || !state->frames ||
+        !sprite_deck_has_wave(deck) || sprite_frame_now(state, &frame)) {
+        sprite_window_close(window);
+        return;
+    }
+    sprite_place(deck, state, &x, &y);
+    if (window->handle && (window->x != x || window->y != y ||
+                           window->width != state->width ||
+                           window->height != state->height))
+        sprite_window_close(window);
+    if (!window->handle) {
+        if (window->failed_ms && now - window->failed_ms < SPRITE_RETRY_MS)
+            return;
+        if (sprite_window_open(window, x, y, state->width, state->height)) {
+            window->failed_ms = now ? now : 1u;
+            sprite_note(256u, "sprite window could not be created");
+            return;
+        }
+        window->failed_ms = 0;
+        sprite_note(deck ? 8u : 4u,
+                    deck ? "sprite window open deck 1" : "sprite window open deck 0");
+    }
+    if (window->shown != (int)frame)
+        sprite_window_blit(window, state, frame);
+}
+
+/* driven from rbp's image draws, which run on its ui thread. */
 static void sprites_feature_after_image(void *render, void *image,
                                         uint16_t window_layer,
                                         uint32_t image_id)
 {
-    uint16_t x1, y1, x2, y2;
-    int file_deck;
+    unsigned now;
+    int screen_up;
+    (void)render;
+    (void)image;
+    (void)window_layer;
+    (void)image_id;
     sprite_take_jobs();
-    memcpy(&x1, (const uint8_t *)image + 0x18u, sizeof(x1));
-    memcpy(&y1, (const uint8_t *)image + 0x1au, sizeof(y1));
-    memcpy(&x2, (const uint8_t *)image + 0x1cu, sizeof(x2));
-    memcpy(&y2, (const uint8_t *)image + 0x1eu, sizeof(y2));
-    if (sprites_trace)
-        sprite_trace(window_layer, image_id, x1, y1, x2, y2);
-    if (sprites_probe)
-        sprite_draw_probe(render, image, x1, y1, x2, y2);
-    if (!sprite_format.ok)
+    now = now_ms();
+    if (now - sprite_tick_ms < SPRITE_FRAME_MS)
         return;
-    /* the sprite rides on the anchor draw itself. drawing it after any other
-       image put it on whatever page was on screen. */
-    file_deck = sprite_file_deck(window_layer, image_id);
-    if (file_deck < 0)
-        return;
-    sprite_note(file_deck ? 8u : 4u,
-                file_deck ? "sprite anchor drawn deck 1" : "sprite anchor drawn deck 0");
-    sprite_paint(render, (const uint8_t *)image, (unsigned)file_deck, x1, y1, x2, y2);
+    sprite_tick_ms = now;
+    screen_up = *(void *volatile *)WAVE_WINDOW_ID != 0;
+    sprite_update_deck(0u, screen_up, now);
+    sprite_update_deck(1u, screen_up, now);
 }
 
 static void sprites_feature_playhead(unsigned int deck, long position)
@@ -1130,11 +766,7 @@ static long sprites_timestretch_fgpr(void *stretch, long position,
 
 static int sprites_feature_configured(void)
 {
-    const char *trace = getenv("RX3_SPRITE_TRACE");
-    const char *probe = getenv("RX3_SPRITE_PROBE");
     const char *nonce = getenv("RX3_SPRITE_NONCE");
-    sprites_trace = trace && trace[0] == '1';
-    sprites_probe = probe && probe[0] == '1';
     if (nonce && nonce[0]) {
         uint32_t value = 0u;
         const char *cursor;
@@ -1143,7 +775,7 @@ static int sprites_feature_configured(void)
         if (value)
             sprites_nonce = value;
     }
-    return sprites_dir != 0 || sprites_trace || sprites_probe;
+    return sprites_dir != 0;
 }
 
 static int sprite_start_load(unsigned deck, const char *stem)
@@ -1218,7 +850,8 @@ static void sprites_feature_remove(void)
             munmap(job, 4096u);
         }
     }
-    sprite_release_all();
+    /* teardown runs as rbp exits and the ui thread may still be blitting, so
+       the frames and windows are left to the process exit. */
 }
 
 static void sprites_feature_track_will_load(unsigned int deck, void *reader,

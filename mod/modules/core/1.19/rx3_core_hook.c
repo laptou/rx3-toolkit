@@ -269,7 +269,6 @@ static volatile unsigned int stock_tab_backing_ready;
 static uint8_t stock_tab_backing[0x54];
 static volatile unsigned int tab_assets_ready;
 static volatile unsigned int tab_assets_installing;
-static volatile int sprite_overlay_draw;
 static volatile unsigned int initial_performance_refresh_done;
 static volatile unsigned long audio_start_calls;
 static volatile uint8_t performance_window;
@@ -1365,10 +1364,6 @@ static void capture_pad_text_template(const void *text, uint16_t window_layer)
 static void hooked_draw_image(void *render, void *image)
 {
     image_draw_calls++;
-    if (sprite_overlay_draw) {
-        original_draw_image(render, image);
-        return;
-    }
     if (RX3_DIAGNOSTIC_ONLY) {
         original_draw_image(render, image);
         return;

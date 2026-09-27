@@ -20,13 +20,10 @@ require(
     "register_prepare_hook sprites_prepare" in MODULE
     and 'export RX3_SPRITES_DIR="$SPRITES_LINK"' in MODULE
     and "RX3_SPRITE_NONCE" in MODULE
-    and "export RX3_SPRITE_TRACE=1" in MODULE
-    and 'trace_path="$USB/RX3_RUNTIME/sprite-trace.log"' in MODULE
     and 'status_path="$USB/RX3_RUNTIME/sprite-status.log"' in MODULE
     and "BOOT_TAG" not in MODULE
-    and 'export RX3_SPRITE_TRACE_PATH="$trace_path"' in MODULE
-    and "anchors.proof" in MODULE
-    and "rbp_environment_value RX3_SPRITE_TRACE" in MODULE
+    and "RX3_SPRITE_TRACE" not in MODULE
+    and "anchors.proof" not in MODULE
     and "request_rbp_restart" in MODULE
     and 'export RX3_SPRITE_STATUS_PATH="$status_path"' in MODULE
     and "Sprites need a restart so the overlay can draw" in MODULE
@@ -40,55 +37,42 @@ require(
 require(
     '#include "../../sprites/1.19/rx3_sprites_feature.h"' in HOOK
     and "sprites_feature_after_image" in HOOK
-    and "EXTENDED_IMAGE_COUNT 0x1704u" in HOOK,
-    "the performance core must own the sprite callbacks and the widened image ids",
+    and "sprite_overlay_draw" not in HOOK,
+    "the performance core must own the sprite callbacks",
 )
 require(
-    "SPRITE_ID_FIRST 0x1604u" in FEATURE
-    and "SPRITE_PROBE_ID 0x1703u" in FEATURE
+    "WAVE_WINDOW_ID ((unsigned long)0x02498d44)" in FEATURE
+    and "DS_GR_CREATE_WINDOW ((unsigned long)0x001a2634)" in FEATURE
+    and "DS_GR_LOCK_WINDOW ((unsigned long)0x001a1c48)" in FEATURE
+    and "original_draw_image" not in FEATURE
+    and "IMAGE_TABLE_POINTER" not in FEATURE
     and "DirectFB" not in FEATURE
     and "dlsym" not in FEATURE,
-    "sprite drawing must stay inside PAL_DRAW_IMAGE and the private id pool",
+    "rbp's waveform window covers every ns window; the sprite must draw into "
+    "its own ds_gr window, not through pal_draw_image",
 )
 require(
-    "RX3_SPRITE_TRACE_PATH" in FEATURE
-    and "sprite_trace_file" in FEATURE
-    and "SPRITE_WAVE_MIN_W 200" in FEATURE
-    and "span_x < SPRITE_WAVE_MIN_W" in FEATURE
-    and "SPRITE_WAVE_MIN_H" in FEATURE,
-    "the draw trace must follow the path on the stick and keep waveform-sized boxes",
+    "static const uint32_t sprite_z_slots[] = { 0x3eu, 0x3du, 0x3cu, 0x3bu };"
+    in FEATURE
+    and "result == DS_GR_Z_TAKEN" in FEATURE,
+    "the overlay z must sit above the waveform (0x4f) and skip taken slots",
 )
 require(
-    "a box under 40px on either edge is a glyph" in FEATURE
-    and "(int)x2 - (int)x1 < SPRITE_WAVE_MIN_H" in FEATURE
-    and "sprite_pick_state" in FEATURE
-    and "sprite waiting for a track" in FEATURE
-    and "RX3_SPRITE_STATUS_PATH" in FEATURE,
-    "a loaded track on either deck must draw, and the strip can be shorter than the frame",
+    "screen_up = *(void *volatile *)WAVE_WINDOW_ID != 0;" in FEATURE
+    and "!sprite_deck_has_wave(deck)" in FEATURE
+    and "sprite_window_close(window);" in FEATURE,
+    "the overlay must close whenever the waveform screen or the deck's "
+    "waveform is gone, or it floats over the browse page",
 )
 require(
-    "sprite_consider" not in FEATURE
-    and "sprite_hold" not in FEATURE
-    and "file_deck = sprite_file_deck(window_layer, image_id);\n    if (file_deck < 0)\n        return;"
-    in FEATURE,
-    "the sprite must draw only on the anchor image's own draw; a box learned "
-    "from the screen put it on the browse page",
+    "SPRITE_KEY_ARGB 0xffff00ffu" in FEATURE
+    and "SPRITE_KEY_ARGB);" in FEATURE,
+    "index 0 must be keyed out by the window's colour key",
 )
 require(
-    "record[0x18u] = 1u; /* rgb565, as the custom tabs */" in FEATURE
-    and "record[0x19u] = 0u;" in FEATURE
-    and "sprite_expand(job, &expanded_bytes)" in FEATURE,
-    "record format 2 reads index bytes as rgb565 pixels; the player must "
-    "expand packs to the tab format",
-)
-require(
-    "values[2] != 8u" in FEATURE
-    and "format 2, palette, 8 bpp" in FEATURE,
-    "the player must accept only the 8-bit indexed pack encoding",
-)
-require(
-    "sprites disabled: hard-mask format is not proven" in FEATURE
-    and "sprites disabled: waveform anchor is not proven" in FEATURE
+    "header->format_byte != 2u" in FEATURE
+    and "header->bpp != 8u" in FEATURE
+    and "format.proof" not in FEATURE
     and "sprites disabled: pack failed validation" in FEATURE,
-    "an unproven format, anchor, or pack must disable the overlay",
+    "the player must accept only the 8-bit indexed pack encoding",
 )
