@@ -2,11 +2,23 @@
 # Swang
 
 With this module on, the SPIRAL Beat FX is renamed SWANG. It swings the music:
-it slows the first note of each pair and speeds up the second, so the
-off-beat lands late. The pitch stays put because each grain plays at normal
-speed. The slowed note uses short grains so drums are not replayed, the sped-up
-note uses long grains so the tone is not chopped, and each new grain starts in
-phase with the one fading out.
+the off-beat of each pair of notes lands late. Nothing is sped up or slowed
+down. Each sixteenth note is moved as a slice: the sixteenths in the first
+note spread out, and the ones in the second note close up. Every hit plays
+untouched and lands within 2 ms of its swung place. To fill the extra time,
+the tail of each first-note sixteenth is stretched by repeating short bits of
+it. To save time, the tail of each second-note sixteenth is cut. Every splice
+is made in phase with the audio already playing, and none cuts through a hit.
+With DEPTH fully left, the output is the input exactly.
+
+To hear it without the player, render a track through the same code:
+
+```sh
+python3 scripts/swang_render.py track.mp3 swung.wav --bpm 124 --first-beat 0.12 --depth 0.67 --note 8th
+```
+
+`--first-beat` is the time, in seconds, of any downbeat in the track. The
+script needs `clang` and `ffmpeg`.
 
 The swing locks to the beat grid of the tempo MASTER deck. With no MASTER deck
 it uses the deck on the Beat FX channel. With neither, or while that deck is

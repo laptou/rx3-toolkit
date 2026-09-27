@@ -46,7 +46,8 @@ int main(int argc, char **argv)
             at += 1.0;
         sw_process(&state, buf, (int)got, (float)at,
                    (float)(beats_per_frame / pair_beats), swing,
-                   (float)(pair_beats / beats_per_frame));
+                   (float)(pair_beats / beats_per_frame),
+                   (int)(pair_beats * 2.0 + 0.5));
         if (fwrite(buf, sizeof(buf[0]), got, stdout) != got)
             return 1;
         frame += (long long)got;

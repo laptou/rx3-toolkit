@@ -44,17 +44,18 @@ static void run(struct sw_state *state, struct sw_stereo *buf, float swing)
         int frames = TOTAL - start < BLOCK ? TOTAL - start : BLOCK;
         float at = (float)(start % PAIR) / (float)PAIR;
         sw_process(state, buf + start, frames, at, 1.0f / (float)PAIR, swing,
-                   (float)PAIR);
+                   (float)PAIR, 2);
     }
 }
 
 /* share of energy, after the first pair, that still sits within ±20 hz of
-   440. a comb throws the tone into sidebands; a locked splice does not. */
-static double purity(const struct sw_stereo *buf, int from, int to)
+   the tone. a comb or an out-of-phase splice throws it into sidebands; a
+   locked splice does not. */
+static double purity(const struct sw_stereo *buf, int from, int to, double hz)
 {
     int n = to - from;
-    int k0 = (int)(420.0 * (double)n / 44100.0 + 0.5);
-    int k1 = (int)(460.0 * (double)n / 44100.0 + 0.5);
+    int k0 = (int)((hz - 20.0) * (double)n / 44100.0 + 0.5);
+    int k1 = (int)((hz + 20.0) * (double)n / 44100.0 + 0.5);
     int k;
     int i;
     double energy = 0.0;
@@ -89,75 +90,111 @@ int main(void)
     int pair;
     int index;
 
-    if (!near(sw_delay_at(0.0f, swing), 0.0f, 1e-6f, "delay at start") ||
-        !near(sw_delay_at(swing, swing), swing - 0.5f, 1e-6f,
-              "delay at the swing point") ||
-        !near(sw_delay_at(0.999999f, swing), 0.0f, 1e-4f, "delay at end") ||
-        !near(sw_delay_at(0.3f, SW_STRAIGHT), 0.0f, 0.0f, "straight"))
-        return 1;
-    for (index = 0; index <= 1000; index++)
-        if (sw_delay_at((float)index / 1000.0f, SW_HARDEST) < 0.0f) {
-            printf("negative delay at %d\n", index);
-            return 2;
+    /* the plan for swung eighths, two sixteenths a note: each sixteenth is
+       pinned where the swing moves it, and the first note's tails stretch
+       between pins. */
+    {
+        float gap = (swing - 0.5f) * PAIR;
+        float lands[4] = { 0.0f, 0.5f * swing * PAIR, swing * PAIR,
+                           (swing + 0.5f * (1.0f - swing)) * PAIR };
+        float delays[4] = { 0.0f, 0.5f * gap, gap, 0.5f * gap };
+        struct sw_plan plan;
+        for (index = 0; index < 4; index++) {
+            plan = sw_plan_at(lands[index] + 10.0f, swing, (float)PAIR, 2);
+            if (plan.region != 2 * index || plan.straight ||
+                !near((float)plan.target, delays[index], 1.0f, "pin"))
+                return 1;
         }
+        plan = sw_plan_at(PAIR - 10.0f, swing, (float)PAIR, 2);
+        if (plan.region != 0 || plan.target != 0u)
+            return 1;
+        plan = sw_plan_at(0.2f * PAIR, swing, (float)PAIR, 2);
+        if (plan.region != 1 || plan.target == 0u ||
+            (float)plan.target >= 0.5f * gap) {
+            printf("stretch is off\n");
+            return 1;
+        }
+        plan = sw_plan_at(0.8f * PAIR, SW_STRAIGHT, (float)PAIR, 2);
+        if (plan.region != 0 || !plan.straight)
+            return 1;
+    }
     if (!near(sw_swing_for(0.0f), 0.5f, 0.0f, "depth 0") ||
         !near(sw_swing_for(1.0f), 0.75f, 0.0f, "depth 1"))
         return 3;
-    if (!near(sw_rate_at(0.3f, 2.0f / 3.0f), 0.75f, 1e-5f, "triplet slow") ||
-        !near(sw_rate_at(0.8f, 2.0f / 3.0f), 1.5f, 1e-5f, "triplet fast") ||
-        !near(sw_rate_at(0.3f, SW_HARDEST), 2.0f / 3.0f, 1e-5f, "hard slow") ||
-        !near(sw_rate_at(0.9f, SW_HARDEST), 2.0f, 1e-5f, "hard fast") ||
-        !near(sw_rate_at(0.3f, SW_STRAIGHT), 1.0f, 0.0f, "straight rate"))
-        return 6;
-
-    /* straight swing is the input, sample for sample. */
+    /* straight swing is the input, bit for bit. */
     for (index = 0; index < TOTAL; index++) {
         buf[index].left = sinf((float)index * 0.05f);
         buf[index].right = -buf[index].left;
     }
     run(&state, buf, SW_STRAIGHT);
     for (index = 0; index < TOTAL; index++)
-        if (!near(buf[index].left, sinf((float)index * 0.05f), 1e-5f,
-                  "passthrough"))
+        if (buf[index].left != sinf((float)index * 0.05f) ||
+            buf[index].right != -sinf((float)index * 0.05f)) {
+            printf("passthrough differs at %d\n", index);
             return 4;
+        }
 
-    /* a short click on every eighth: the downbeat stays, the off-beat moves
-       from half the pair to the swing point. within 150 frames (3.4 ms). */
-    for (index = 0; index < TOTAL; index++) {
-        int in_half = index % (PAIR / 2);
-        buf[index].left = buf[index].right = in_half < 32 ? 1.0f : 0.0f;
-    }
-    run(&state, buf, swing);
-    for (pair = 1; pair < PAIRS; pair++) {
-        int base = pair * PAIR;
-        float on = centroid(buf, base - PAIR / 8, base + PAIR / 8) - PAIR / 8;
-        float off = centroid(buf, base + PAIR / 4, base + 7 * PAIR / 8) + PAIR / 4;
-        if (!near(on, 16.0f, 150.0f, "downbeat") ||
-            !near(off, swing * PAIR + 16.0f, 150.0f, "off-beat"))
-            return 5;
+    /* a short click on every sixteenth of swung eighths. each lands where
+       the swing moves it (the first note's spread out, the second note's
+       closed up), no more than 2 ms late, and is played once and whole: no
+       splice runs through a hit. */
+    for (pair = 0; pair < 3; pair++) {
+        static const float swings[3] = { 0.6f, 2.0f / 3.0f, SW_HARDEST };
+        float hit_swing = swings[pair];
+        float lands[4];
+        int later;
+        int hit;
+        lands[0] = 0.0f;
+        lands[1] = 0.5f * hit_swing;
+        lands[2] = hit_swing;
+        lands[3] = hit_swing + 0.5f * (1.0f - hit_swing);
+        for (index = 0; index < TOTAL; index++)
+            buf[index].left = buf[index].right =
+                index % (PAIR / 4) < 32 ? 1.0f : 0.0f;
+        run(&state, buf, hit_swing);
+        for (later = 1; later < PAIRS; later++)
+            for (hit = 0; hit < 4; hit++) {
+                int from = later * PAIR + (int)(lands[hit] * PAIR) - PAIR / 16;
+                int to = from + PAIR / 8;
+                double energy = 0.0;
+                for (index = from; index < to; index++)
+                    energy += buf[index].left * buf[index].left;
+                if (!near(centroid(buf, from, to) + (float)from,
+                          (float)later * PAIR + lands[hit] * PAIR + 16.0f,
+                          (float)SW_LAG_NEAR + 1.0f, "sixteenth") ||
+                    !near((float)energy, 32.0f, 0.5f, "sixteenth level")) {
+                    printf("swing %.3f, pair %d, sixteenth %d\n", hit_swing,
+                           later, hit);
+                    return 5;
+                }
+            }
     }
 
-    /* 440 hz through the warp. drop the first pair, while the grains fill. */
+    /* a treble and a bass tone through the warp, after the first pair.
+       out-of-phase splices would spread them into sidebands. */
     {
-        double triplet;
-        double hard;
-        double step = 2.0 * 3.141592653589793 * 440.0 / 44100.0;
-        for (index = 0; index < TOTAL; index++) {
-            buf[index].left = buf[index].right = sin(step * (double)index);
-        }
-        run(&state, buf, swing);
-        triplet = purity(buf, PAIR, TOTAL);
-        for (index = 0; index < TOTAL; index++) {
-            buf[index].left = buf[index].right = sin(step * (double)index);
-        }
-        run(&state, buf, SW_HARDEST);
-        hard = purity(buf, PAIR, TOTAL);
-        if (triplet < 0.90 || hard < 0.90) {
-            printf("purity %.3f %.3f, below 0.90\n", triplet, hard);
-            free(buf);
-            return 7;
-        }
-        printf("swang dsp: ok (purity %.3f %.3f)\n", triplet, hard);
+        static const double tones[2] = { 440.0, 55.0 };
+        double worst = 1.0;
+        int tone;
+        for (tone = 0; tone < 2; tone++)
+            for (pair = 0; pair < 2; pair++) {
+                double step = 2.0 * 3.141592653589793 * tones[tone] / 44100.0;
+                double pure;
+                for (index = 0; index < TOTAL; index++)
+                    buf[index].left = buf[index].right =
+                        (float)sin(step * (double)index);
+                run(&state, buf, pair ? SW_HARDEST : swing);
+                pure = purity(buf, PAIR, TOTAL, tones[tone]);
+                if (pure < worst)
+                    worst = pure;
+                if (pure < 0.95) {
+                    printf("%.0f hz purity %.3f, below 0.95\n", tones[tone],
+                           pure);
+                    free(buf);
+                    return 7;
+                }
+            }
+        printf("swang dsp: ok (worst purity %.3f)\n", worst);
     }
     free(buf);
     return 0;

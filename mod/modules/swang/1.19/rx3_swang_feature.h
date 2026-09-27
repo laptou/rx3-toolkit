@@ -176,7 +176,8 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
         glide = 1.0f;
     sw_swing += (swing - sw_swing) * glide;
     sw_process(&sw_state, (struct sw_stereo *)buffer, frames, pair_at,
-               pair_step, sw_swing, pair_frames);
+               pair_step, sw_swing, pair_frames,
+               (int)(pair_beats * 2.0f + 0.5f));
     return 1;
 }
 

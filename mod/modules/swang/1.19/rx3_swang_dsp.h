@@ -1,23 +1,25 @@
 /* SPDX-License-Identifier: MPL-2.0
- * swing by time warp, shared by the player and the host test. no libc and
- * no libm.
+ * swing by moving slices, shared by the player and the host test. no libc
+ * and no libm.
  *
- * the grid is cut into pairs of notes. within a pair the first note is
- * stretched and the second squeezed, so the off-beat that sat at half the
- * pair lands later, at the swing point (0.5 straight, 2/3 triplet, 0.75
- * hard). every pair still starts on the grid.
+ * the grid is cut into pairs of notes. swing moves the off-beat, which sat
+ * at half the pair, later to the swing point (0.5 straight, 2/3 triplet,
+ * 0.75 hard). every pair still starts on the grid.
  *
- * that warp is a delay that only grows and shrinks: zero at the pair's start,
- * largest at the swing point, back to zero at the end. a delay that moves
- * would bend pitch, so each grain plays the ring at normal speed and holds
- * the delay it started with. two grains sit half a length apart, windowed
- * with hann curves that sum to one.
- *
- * stretching repeats audio, so the slow note uses short grains and a hit is
- * not played twice. squeezing skips audio, so the fast note uses long grains
- * and the tone is not chopped into grit. each new grain starts in phase with
- * the one still sounding: mixed a few milliseconds apart, the two copies comb
- * and the midrange distorts. a delay of zero is the input exactly.
+ * nothing is sped up or slowed down. the output reads the input through a
+ * delay that only changes at splices, and between splices it is the input
+ * exactly. each note is cut into its sixteenths, and every sixteenth's hit
+ * is pinned where the swing moves it: the first note's sixteenths spread
+ * out, the second note's close up.
+ *   - a pin is one splice a few ms before the hit, and from there the hit
+ *     plays untouched.
+ *   - a first-note sixteenth is longer once swung. after its attack, its
+ *     tail is stretched to fill the gap: every few tens of ms the reader
+ *     crossfades back a little, so that bit of the tail is heard twice.
+ *   - a second-note sixteenth is shorter once swung. its tail is cut by the
+ *     next pin.
+ * every splice lands in phase with the audio already playing, and none runs
+ * through an attack.
  */
 
 #ifndef RX3_SWANG_DSP_H
@@ -29,46 +31,50 @@
 
 /* the largest delay is a quarter of a pair, and the longest pair (swung
    quarter notes) is two beats: 33075 frames at 40 bpm. the ring holds that
-   plus the long grain and the align search. */
+   plus the phase search and its window. */
 #define SW_RING 65536u
 #define SW_RING_MASK (SW_RING - 1u)
-/* repeat regime and skip regime. one length cannot do both: a long grain
-   replays drum hits while stretching, a short grain shreds the tone while
-   squeezing. */
-#define SW_GRAIN_SLOW 512u
-#define SW_GRAIN_FAST 2048u
-#define SW_DELAY_LIMIT ((float)(SW_RING - SW_GRAIN_FAST - 4u))
 #define SW_STRAIGHT 0.5f
 #define SW_HARDEST 0.75f
-/* one period of about 57 hz, searched either side of the nominal delay. */
-#define SW_ALIGN_MAX 768
-#define SW_ALIGN_WINDOW 256u
-#define SW_ALIGN_STRIDE 4
+/* the crossfade of every splice. */
+#define SW_FADE 512u
+/* the start of the first note that is never stretched (20 ms), and how long
+   before a hit the splice that places it is done (3 ms). both shrink on
+   short pairs. */
+#define SW_ATTACK 882u
+#define SW_PREROLL 128u
+/* the stretch splices once it is this far behind: the slice heard twice. */
+#define SW_JUMP 512u
+/* phase search either side of a stretch splice's target: half a period of
+   50 hz. a splice that places a hit may only land up to 2 ms late. */
+#define SW_LAG_WIDE 441u
+#define SW_LAG_NEAR 96u
+/* the onset test's windows, in frames: after the hit, the gap before it,
+   and the stretch before that it is compared with. */
+#define SW_ONSET_AFTER 128u
+#define SW_ONSET_GAP 128u
+#define SW_ONSET_BEFORE 512u
+/* a held delay the swing's glide has moved this far from is set again. */
+#define SW_SLACK 441u
+#define SW_MATCH_WINDOW 1024u
+#define SW_MATCH_STRIDE 4u
+#define SW_MATCH_MAX (2u * SW_LAG_WIDE / SW_MATCH_STRIDE + 2u)
+#define SW_DELAY_LIMIT (SW_RING - SW_MATCH_WINDOW - SW_LAG_WIDE - 4u)
 #define SW_HANN_TABLE 1024u
-/* how long the two readers share the output after the rate flips. */
-#define SW_FADE 64u
 
 struct sw_stereo {
     float left;
     float right;
 };
 
-/* one reader. grain length is fixed; the two heads stay half a grain apart. */
-struct sw_engine {
-    uint32_t grain;
-    uint32_t age[2];
-    float delay[2];
-    float align[2];
-    float mix;
-    int live;
-};
-
 struct sw_state {
     struct sw_stereo ring[SW_RING];
     uint32_t written;
-    struct sw_engine slow;
-    struct sw_engine fast;
-    int use_fast;
+    uint32_t delay;  /* the reader heard, or fading in */
+    uint32_t from;   /* the reader fading out */
+    uint32_t faded;  /* frames into the crossfade, SW_FADE when none */
+    int region;
+    int placed;      /* this region's delay has been set since entering it */
 };
 
 static float sw_hann_table[SW_HANN_TABLE + 1u];
@@ -84,38 +90,114 @@ static inline float sw_swing_for(float depth)
     return SW_STRAIGHT + (SW_HARDEST - SW_STRAIGHT) * depth;
 }
 
-/* the delay at place u (0..1) in a pair, as a fraction of the pair: output
-   time u plays source time u - delay. */
-static inline float sw_delay_at(float u, float swing)
+struct sw_plan {
+    int region;      /* 2k: slice k's pin, 2k+1: slice k's stretch */
+    uint32_t target; /* the delay wanted, in frames */
+    uint32_t most;   /* the stretch's limit: it never reaches back into the
+                        attack it follows */
+    uint32_t floor;  /* a pin's limit: the reader leaving it must not reach
+                        the next slice's hit before its fade is done */
+    int ahead;       /* a pin's hit, in frames after the fade (<0: passed) */
+    int straight;    /* no swing: delay 0 exactly, the input untouched */
+};
+
+/* one pair's slices: each note cut into `slices` sixteenths. */
+struct sw_slices {
+    float pair_frames;
+    float swing;
+    float source; /* one slice of the input */
+    int per_note;
+};
+
+static uint32_t sw_frames(float value)
 {
-    float source;
-    if (u <= 0.0f || u >= 1.0f || swing <= SW_STRAIGHT)
-        return 0.0f;
-    if (u < swing)
-        source = u * (0.5f / swing);
-    else
-        source = 0.5f + (u - swing) * (0.5f / (1.0f - swing));
-    return u - source;
+    return value > 0.0f ? (uint32_t)(value + 0.5f) : 0u;
 }
 
-/* how fast source time moves per output frame. below 1 the note is slowed
-   and grains repeat; above 1 it is sped up and grains skip. */
-static inline float sw_rate_at(float u, float swing)
+/* where slice j (0..2n, 2n the next downbeat) starts once swung. */
+static float sw_slice_out(const struct sw_slices *cut, int j)
 {
-    if (u <= 0.0f || u >= 1.0f || swing <= SW_STRAIGHT)
-        return 1.0f;
-    if (u < swing)
-        return 0.5f / swing;
-    return 0.5f / (1.0f - swing);
+    float n = (float)cut->per_note;
+    if (j <= cut->per_note)
+        return (float)j * cut->swing * cut->pair_frames / n;
+    return cut->swing * cut->pair_frames +
+           (float)(j - cut->per_note) * (1.0f - cut->swing) *
+               cut->pair_frames / n;
 }
 
-static inline float sw_clamp_delay(float delay)
+static float sw_slice_delay(const struct sw_slices *cut, int j)
 {
-    if (delay < 0.0f)
+    if (j >= 2 * cut->per_note)
         return 0.0f;
-    if (delay > SW_DELAY_LIMIT)
-        return SW_DELAY_LIMIT;
-    return delay;
+    return sw_slice_out(cut, j) - (float)j * cut->source;
+}
+
+static struct sw_plan sw_pin(const struct sw_slices *cut, int j, float t)
+{
+    struct sw_plan plan = { 0, 0u, 0u, 0u, 0, 0 };
+    int count = 2 * cut->per_note;
+    int home = j >= count ? j - count : j;
+    plan.region = 2 * home;
+    plan.target = sw_frames(sw_slice_delay(cut, j));
+    plan.ahead = (int)(sw_slice_out(cut, j) - t);
+    if (home >= cut->per_note)
+        plan.floor = sw_frames(sw_slice_delay(cut, home + 1));
+    return plan;
+}
+
+/* what frame t (0..pair_frames) of a pair wants, once a fade started now is
+   done. a fading reader keeps its smaller delay and so reaches the next hit
+   first: a stretch ends a jump early, while the reader it leaves is still
+   a preroll short of the hit. */
+static struct sw_plan sw_plan_at(float t, float swing, float pair_frames,
+                                 int slices)
+{
+    struct sw_plan plan = { 0, 0u, 0u, 0u, 0, 1 };
+    struct sw_slices cut;
+    float attack = (float)SW_ATTACK;
+    float preroll = (float)SW_PREROLL;
+    float start;
+    float end;
+    int k;
+    if (!(pair_frames > 0.0f) || slices < 1)
+        return plan;
+    if (swing > SW_HARDEST)
+        swing = SW_HARDEST;
+    if ((swing - SW_STRAIGHT) * pair_frames / (float)slices < 1.0f)
+        return plan;
+    cut.pair_frames = pair_frames;
+    cut.swing = swing;
+    cut.source = 0.5f * pair_frames / (float)slices;
+    cut.per_note = slices;
+    if (attack > cut.source / 4.0f)
+        attack = cut.source / 4.0f;
+    if (preroll > cut.source / 16.0f)
+        preroll = cut.source / 16.0f;
+    for (k = 0; k < 2 * slices - 1 && t >= sw_slice_out(&cut, k + 1); k++)
+        ;
+    start = sw_slice_out(&cut, k);
+    end = sw_slice_out(&cut, k + 1);
+    if (t >= end - preroll)
+        return sw_pin(&cut, k + 1, t);
+    if (k < slices) {
+        /* a first-note slice: its attack, then its tail stretched. */
+        float stretch_from = start + attack;
+        float stretch_end = end - preroll - (float)SW_JUMP;
+        float here = sw_slice_delay(&cut, k);
+        float next = sw_slice_delay(&cut, k + 1);
+        if (t < stretch_from)
+            return sw_pin(&cut, k, t);
+        if (t >= stretch_end)
+            return sw_pin(&cut, k + 1, t);
+        plan.straight = 0;
+        plan.region = 2 * k + 1;
+        plan.target = sw_frames(here + (next - here) * (t - stretch_from) /
+                                           (stretch_end - stretch_from));
+        plan.most = sw_frames(here + (t - stretch_from) - (float)SW_FADE);
+        return plan;
+    }
+    /* a second-note slice plays whole until the next pin cuts its tail. */
+    return sw_pin(&cut, k, t);
 }
 
 /* cos over [-pi, pi] by series. the window table is the only place it is
@@ -147,8 +229,8 @@ static void sw_build_hann(void)
     sw_hann_ready = 1;
 }
 
-/* hann at 0 and 1 is silent, at 1/2 it is unity. half a grain apart the two
-   windows sum to one, so the level does not pump. */
+/* hann at 0 is silent and at 1/2 unity; its first half is the fade in, and
+   one minus it the fade out, so an in-phase splice keeps its level. */
 static float sw_hann(float fraction)
 {
     float scaled = fraction * (float)SW_HANN_TABLE;
@@ -161,43 +243,9 @@ static float sw_hann(float fraction)
            (sw_hann_table[index + 1u] - sw_hann_table[index]) * blend;
 }
 
-static float sw_cubic(float a, float b, float c, float d, float t)
-{
-    float c0 = b;
-    float c1 = 0.5f * (c - a);
-    float c2 = a - 2.5f * b + 2.0f * c - 0.5f * d;
-    float c3 = 0.5f * (d - a) + 1.5f * (b - c);
-    return ((c3 * t + c2) * t + c1) * t + c0;
-}
-
 static struct sw_stereo sw_at(const struct sw_state *state, uint32_t delay)
 {
     return state->ring[(state->written - 1u - delay) & SW_RING_MASK];
-}
-
-/* fractional delay. an integer delay is that sample exactly, which is what
-   makes a delay of zero the input. the cubic tap nearer than the write head
-   does not exist, so delays under one frame stay on the newest sample. */
-static struct sw_stereo sw_read(const struct sw_state *state, float delay)
-{
-    uint32_t whole;
-    float part;
-    struct sw_stereo b;
-    delay = sw_clamp_delay(delay);
-    whole = (uint32_t)delay;
-    part = delay - (float)whole;
-    b = sw_at(state, whole);
-    if (part == 0.0f || whole == 0u)
-        return b;
-    {
-        struct sw_stereo a = sw_at(state, whole - 1u);
-        struct sw_stereo c = sw_at(state, whole + 1u);
-        struct sw_stereo d = sw_at(state, whole + 2u);
-        struct sw_stereo out;
-        out.left = sw_cubic(a.left, b.left, c.left, d.left, part);
-        out.right = sw_cubic(a.right, b.right, c.right, d.right, part);
-        return out;
-    }
 }
 
 static float sw_mono(const struct sw_state *state, uint32_t delay)
@@ -206,217 +254,172 @@ static float sw_mono(const struct sw_state *state, uint32_t delay)
     return sample.left + sample.right;
 }
 
-static uint32_t sw_whole(float delay)
+/* whether a hit starts at delay `at`: the treble, taken as the change from
+   one frame to the next so a hat is seen over a bass line, jumps 4x (6 db)
+   over the 12 ms before it. a hit still ahead of the write head counts. */
+static int sw_onset(const struct sw_state *state, int at)
 {
-    delay = sw_clamp_delay(delay);
-    return (uint32_t)delay;
-}
-
-static int sw_lag_ok(float nominal, int lag)
-{
-    float read = nominal + (float)lag;
-    return read >= 0.0f && read <= SW_DELAY_LIMIT;
-}
-
-static float sw_corr(const struct sw_state *state, uint32_t other,
-                     uint32_t incoming, int stride)
-{
-    float score = 0.0f;
+    float after = 0.0f;
+    float before = 0.0f;
     uint32_t i;
-    for (i = 0u; i < SW_ALIGN_WINDOW; i += (uint32_t)stride)
-        score += sw_mono(state, other + i) * sw_mono(state, incoming + i);
-    return score;
+    if (at < (int)SW_ONSET_AFTER)
+        return 1;
+    for (i = 0u; i < SW_ONSET_AFTER; i++) {
+        uint32_t d = (uint32_t)at - SW_ONSET_AFTER + i;
+        float edge = sw_mono(state, d) - sw_mono(state, d + 1u);
+        after += edge * edge;
+    }
+    for (i = 0u; i < SW_ONSET_BEFORE; i++) {
+        uint32_t d = (uint32_t)at + SW_ONSET_GAP + i;
+        float edge = sw_mono(state, d) - sw_mono(state, d + 1u);
+        before += edge * edge;
+    }
+    return after > 1e-4f &&
+           after * (float)SW_ONSET_BEFORE >
+               4.0f * before * (float)SW_ONSET_AFTER;
 }
 
-/* lag added to the nominal delay so the new grain matches the head that is
+/* how well the reader at candidate carries on from the one at playing,
+   judged on the window both have just read. normalised by the candidate's
+   energy, so a loud slice does not win by level alone. */
+static float sw_score(const struct sw_state *state, uint32_t playing,
+                      uint32_t candidate, uint32_t stride)
+{
+    float cross = 0.0f;
+    float energy = 0.0f;
+    uint32_t i;
+    for (i = 0u; i < SW_MATCH_WINDOW; i += stride) {
+        float a = sw_mono(state, playing + i);
+        float b = sw_mono(state, candidate + i);
+        cross += a * b;
+        energy += b * b;
+    }
+    if (energy < 1e-9f)
+        return 0.0f;
+    return (cross < 0.0f ? -cross * cross : cross * cross) / energy;
+}
+
+/* the delay in [low, high] whose reader is most in phase with the one at
    playing. a whole period away is the same phase but a worse time, so among
-   lags that correlate as well as the best, the one nearest zero wins. nothing
-   to align to (score <= 0) leaves the nominal delay alone. */
-static float sw_align(const struct sw_state *state, float other_read,
-                      float nominal)
+   delays that score close to the best, the one nearest nominal wins. with
+   nothing to match (silence, or no positive score) it is nominal. */
+static uint32_t sw_match(const struct sw_state *state, uint32_t playing,
+                         uint32_t low, uint32_t high, uint32_t nominal)
 {
-    uint32_t other = sw_whole(other_read);
-    int lag;
-    int best_lag = 0;
-    int near_lag = 0;
-    float best_score;
-    float floor_score;
-    int low;
-    int high;
-    int fine_lag;
-    float fine_score;
+    float scores[SW_MATCH_MAX];
+    float best = 0.0f;
+    uint32_t count = 0u;
+    uint32_t chosen;
+    uint32_t distance = 0xffffffffu;
+    uint32_t index;
+    uint32_t delay;
+    float fine_best;
 
-    if (!sw_lag_ok(nominal, 0))
-        nominal = sw_clamp_delay(nominal);
-    best_score = sw_corr(state, other, sw_whole(nominal), SW_ALIGN_STRIDE);
-    for (lag = -SW_ALIGN_MAX; lag <= SW_ALIGN_MAX; lag += SW_ALIGN_STRIDE) {
-        float score;
-        if (lag == 0 || !sw_lag_ok(nominal, lag))
-            continue;
-        score = sw_corr(state, other, sw_whole(nominal + (float)lag),
-                        SW_ALIGN_STRIDE);
-        if (score > best_score) {
-            best_score = score;
-            best_lag = lag;
+    if (high > SW_DELAY_LIMIT)
+        high = SW_DELAY_LIMIT;
+    if (low > high)
+        low = high;
+    if (nominal < low)
+        nominal = low;
+    if (nominal > high)
+        nominal = high;
+    if (low == high)
+        return low;
+    for (delay = low; delay <= high && count < SW_MATCH_MAX;
+         delay += SW_MATCH_STRIDE) {
+        scores[count] = sw_score(state, playing, delay, SW_MATCH_STRIDE);
+        if (scores[count] > best)
+            best = scores[count];
+        count++;
+    }
+    if (best <= 0.0f)
+        return nominal;
+    chosen = nominal;
+    for (index = 0u; index < count; index++) {
+        uint32_t at = low + index * SW_MATCH_STRIDE;
+        uint32_t away = at > nominal ? at - nominal : nominal - at;
+        if (scores[index] >= 0.9f * best && away < distance) {
+            distance = away;
+            chosen = at;
         }
     }
-    if (best_score <= 0.0f)
-        return 0.0f;
-
-    /* a periodic copy scores almost as high as the true lag. keep the
-       closest, which is the same phase and the delay the warp asked for. */
-    floor_score = best_score * 0.999f;
-    near_lag = best_lag;
-    for (lag = -SW_ALIGN_MAX; lag <= SW_ALIGN_MAX; lag += SW_ALIGN_STRIDE) {
-        float score;
-        int distance;
-        int best_distance;
-        if (!sw_lag_ok(nominal, lag))
-            continue;
-        score = sw_corr(state, other, sw_whole(nominal + (float)lag),
-                        SW_ALIGN_STRIDE);
-        if (score < floor_score)
-            continue;
-        distance = lag < 0 ? -lag : lag;
-        best_distance = near_lag < 0 ? -near_lag : near_lag;
-        if (distance < best_distance)
-            near_lag = lag;
-    }
-
-    low = near_lag - SW_ALIGN_STRIDE;
-    high = near_lag + SW_ALIGN_STRIDE;
-    if (low < -SW_ALIGN_MAX)
-        low = -SW_ALIGN_MAX;
-    if (high > SW_ALIGN_MAX)
-        high = SW_ALIGN_MAX;
-    fine_lag = near_lag;
-    fine_score = -1.0e30f;
-    for (lag = low; lag <= high; lag++) {
-        float score;
-        if (!sw_lag_ok(nominal, lag))
-            continue;
-        score = sw_corr(state, other, sw_whole(nominal + (float)lag), 1);
-        if (score > fine_score) {
-            fine_score = score;
-            fine_lag = lag;
+    /* the near candidate sits on the slope of its peak: climb to the top. */
+    fine_best = sw_score(state, playing, chosen, 2u);
+    for (;;) {
+        float down = chosen > low ? sw_score(state, playing, chosen - 1u, 2u)
+                                  : -1.0e30f;
+        float up = chosen < high ? sw_score(state, playing, chosen + 1u, 2u)
+                                 : -1.0e30f;
+        if (down <= fine_best && up <= fine_best)
+            break;
+        if (down > up) {
+            chosen--;
+            fine_best = down;
+        } else {
+            chosen++;
+            fine_best = up;
         }
     }
-    if (fine_score <= 0.0f)
-        return 0.0f;
-    return (float)fine_lag;
+    return chosen;
 }
 
-static void sw_engine_clear(struct sw_engine *engine, uint32_t grain,
-                            int live, float mix)
+static void sw_splice(struct sw_state *state, uint32_t to)
 {
-    engine->grain = grain;
-    engine->age[0] = 0u;
-    engine->age[1] = grain / 2u;
-    engine->delay[0] = 0.0f;
-    engine->delay[1] = 0.0f;
-    engine->align[0] = 0.0f;
-    engine->align[1] = 0.0f;
-    engine->mix = mix;
-    engine->live = live;
+    if (to == state->delay)
+        return;
+    state->from = state->delay;
+    state->delay = to;
+    state->faded = 0u;
 }
 
-/* delay a grain should hold so its middle, half a grain on, lands on the
-   warp. */
-static float sw_target_at(float pair_at, float pair_step, float swing,
-                          float pair_frames, uint32_t half)
+/* between splices: start one if the plan's delay is out of reach. */
+static void sw_steer(struct sw_state *state, struct sw_plan plan)
 {
-    float centre = pair_at + pair_step * (float)half;
-    while (centre >= 1.0f)
-        centre -= 1.0f;
-    while (centre < 0.0f)
-        centre += 1.0f;
-    return sw_clamp_delay(sw_delay_at(centre, swing) * pair_frames);
-}
-
-static float sw_loud_read(const struct sw_engine *engine)
-{
-    float best = -1.0f;
-    float read = 0.0f;
-    unsigned int head;
-    for (head = 0u; head < 2u; head++) {
-        float weight = sw_hann((float)engine->age[head] / (float)engine->grain);
-        if (weight > best) {
-            best = weight;
-            read = engine->delay[head] + engine->align[head];
+    uint32_t now = state->delay;
+    uint32_t target = plan.target;
+    if (plan.region & 1) {
+        uint32_t high = target + SW_LAG_WIDE;
+        if (high > plan.most)
+            high = plan.most;
+        if (target >= now + SW_JUMP && plan.most >= target + SW_LAG_WIDE) {
+            /* fall back by about a slice, never forward. */
+            uint32_t low = target - SW_LAG_WIDE;
+            if (low < now + SW_JUMP / 4u)
+                low = now + SW_JUMP / 4u;
+            sw_splice(state, sw_match(state, now, low, high, target));
+        } else if (now > target + SW_SLACK) {
+            /* ahead of the stretch after a seek or a glide back. */
+            uint32_t low = target > SW_LAG_WIDE ? target - SW_LAG_WIDE : 0u;
+            sw_splice(state, sw_match(state, now, low, high, target));
         }
+        return;
     }
-    return read;
-}
-
-/* the head that is about to be heard (weight 1) takes the delay at this
-   frame. the silent head takes the delay it will be loudest at. both are
-   slid into phase with whatever was already playing. */
-static void sw_engine_arm(struct sw_state *state, struct sw_engine *engine,
-                          float other_read, float pair_at, float pair_step,
-                          float swing, float pair_frames)
-{
-    float now = sw_clamp_delay(sw_delay_at(pair_at, swing) * pair_frames);
-    float centre = sw_target_at(pair_at, pair_step, swing, pair_frames,
-                                engine->grain / 2u);
-    float now_read = sw_clamp_delay(now + sw_align(state, other_read, now));
-    float centre_read =
-        sw_clamp_delay(centre + sw_align(state, other_read, centre));
-    engine->age[0] = 0u;
-    engine->age[1] = engine->grain / 2u;
-    engine->delay[0] = centre;
-    engine->align[0] = centre_read - centre;
-    engine->delay[1] = now;
-    engine->align[1] = now_read - now;
-}
-
-static struct sw_stereo sw_engine_step(struct sw_state *state,
-                                       struct sw_engine *engine,
-                                       float pair_at, float pair_step,
-                                       float swing, float pair_frames)
-{
-    struct sw_stereo out;
-    float target = sw_target_at(pair_at, pair_step, swing, pair_frames,
-                                engine->grain / 2u);
-    unsigned int head;
-    out.left = 0.0f;
-    out.right = 0.0f;
-    for (head = 0u; head < 2u; head++) {
-        float weight;
-        float read;
-        struct sw_stereo grain;
-        if (engine->age[head] >= engine->grain) {
-            unsigned int other = 1u - head;
-            float other_read = engine->delay[other] + engine->align[other];
-            float lag = sw_align(state, other_read, target);
-            float placed = sw_clamp_delay(target + lag);
-            engine->age[head] = 0u;
-            engine->delay[head] = target;
-            engine->align[head] = placed - target;
+    /* a pin keeps one delay. it is set on entering the pin, and again only
+       if the glide carries the swing far from it. a hit at the pin holds it
+       within 2 ms of the grid; with no hit the timing is free, and the pin
+       has a whole bass period to land in phase. */
+    {
+        int drifted = now + SW_SLACK < target || now > target + SW_SLACK;
+        uint32_t reach;
+        uint32_t low;
+        uint32_t high;
+        if (plan.straight) {
+            sw_splice(state, target);
+            state->placed = 1;
+            return;
         }
-        weight = sw_hann((float)engine->age[head] / (float)engine->grain);
-        read = engine->delay[head] + engine->align[head];
-        grain = sw_read(state, read);
-        out.left += grain.left * weight;
-        out.right += grain.right * weight;
-        engine->age[head]++;
-    }
-    return out;
-}
-
-static void sw_slew(struct sw_state *state)
-{
-    float step = 1.0f / (float)SW_FADE;
-    if (state->use_fast) {
-        if (state->fast.mix < 1.0f)
-            state->fast.mix += step;
-        if (state->fast.mix > 1.0f)
-            state->fast.mix = 1.0f;
-        state->slow.mix = 1.0f - state->fast.mix;
-    } else if (state->slow.mix < 1.0f) {
-        state->slow.mix += step;
-        if (state->slow.mix > 1.0f)
-            state->slow.mix = 1.0f;
-        state->fast.mix = 1.0f - state->slow.mix;
+        if (state->placed && !drifted)
+            return;
+        reach = sw_onset(state, (int)target - (int)SW_FADE - plan.ahead)
+                    ? SW_LAG_NEAR
+                    : SW_LAG_WIDE;
+        low = target > reach ? target - reach : 0u;
+        high = target + reach;
+        if (low < plan.floor)
+            low = plan.floor;
+        if (now < low || now > high)
+            sw_splice(state, sw_match(state, now, low, high, target));
+        state->placed = 1;
     }
 }
 
@@ -430,54 +433,48 @@ static inline void sw_reset(struct sw_state *state)
         state->ring[index].right = 0.0f;
     }
     state->written = 0u;
-    sw_engine_clear(&state->slow, SW_GRAIN_SLOW, 1, 1.0f);
-    sw_engine_clear(&state->fast, SW_GRAIN_FAST, 0, 0.0f);
-    state->use_fast = 0;
+    state->delay = 0u;
+    state->from = 0u;
+    state->faded = SW_FADE;
+    state->region = 0;
+    state->placed = 1;
 }
 
 /* one block in place. pair_at (0..1) is where the block starts within its
-   pair, pair_step the pairs per frame, pair_frames the frames in one pair. */
+   pair, pair_step the pairs per frame, pair_frames the frames in one pair,
+   and slices the sixteenths in one note. a splice is planned for where the
+   pair will be when its fade is done. */
 static inline void sw_process(struct sw_state *state, struct sw_stereo *buf,
                               int frames, float pair_at, float pair_step,
-                              float swing, float pair_frames)
+                              float swing, float pair_frames, int slices)
 {
     int index;
     if (!sw_hann_ready)
         sw_build_hann();
     for (index = 0; index < frames; index++) {
-        int want_fast = sw_rate_at(pair_at, swing) > 1.0f;
-        struct sw_stereo slow_out;
-        struct sw_stereo fast_out;
+        float arrive = (pair_at + pair_step * (float)SW_FADE) * pair_frames;
+        struct sw_plan plan;
+        struct sw_stereo out;
         state->ring[state->written & SW_RING_MASK] = buf[index];
         state->written++;
-        if (want_fast != state->use_fast) {
-            struct sw_engine *incoming = want_fast ? &state->fast : &state->slow;
-            struct sw_engine *outgoing = want_fast ? &state->slow : &state->fast;
-            if (!incoming->live)
-                sw_engine_arm(state, incoming, sw_loud_read(outgoing), pair_at,
-                              pair_step, swing, pair_frames);
-            incoming->live = 1;
-            state->use_fast = want_fast;
+        while (pair_frames > 0.0f && arrive >= pair_frames)
+            arrive -= pair_frames;
+        plan = sw_plan_at(arrive, swing, pair_frames, slices);
+        if (plan.region != state->region) {
+            state->region = plan.region;
+            state->placed = 0;
         }
-        sw_slew(state);
-        if (state->slow.mix <= 0.0f)
-            state->slow.live = 0;
-        if (state->fast.mix <= 0.0f)
-            state->fast.live = 0;
-        slow_out.left = 0.0f;
-        slow_out.right = 0.0f;
-        fast_out.left = 0.0f;
-        fast_out.right = 0.0f;
-        if (state->slow.live)
-            slow_out = sw_engine_step(state, &state->slow, pair_at, pair_step,
-                                      swing, pair_frames);
-        if (state->fast.live)
-            fast_out = sw_engine_step(state, &state->fast, pair_at, pair_step,
-                                      swing, pair_frames);
-        buf[index].left = slow_out.left * state->slow.mix +
-                          fast_out.left * state->fast.mix;
-        buf[index].right = slow_out.right * state->slow.mix +
-                           fast_out.right * state->fast.mix;
+        if (state->faded >= SW_FADE)
+            sw_steer(state, plan);
+        out = sw_at(state, state->delay);
+        if (state->faded < SW_FADE) {
+            float in = sw_hann(0.5f * (float)state->faded / (float)SW_FADE);
+            struct sw_stereo old = sw_at(state, state->from);
+            out.left = old.left + (out.left - old.left) * in;
+            out.right = old.right + (out.right - old.right) * in;
+            state->faded++;
+        }
+        buf[index] = out;
         pair_at += pair_step;
         if (pair_at >= 1.0f)
             pair_at -= 1.0f;

@@ -78,15 +78,17 @@ require(
 )
 require(
     "#define SW_RING 65536u" in DSP,
-    "the ring holds a quarter of a two-beat pair at 40 bpm plus a grain",
+    "the ring holds a quarter of a two-beat pair at 40 bpm plus the phase "
+    "search",
 )
 require(
-    "#define SW_GRAIN_SLOW 512u" in DSP
-    and "#define SW_GRAIN_FAST 2048u" in DSP
-    and "best_score" in DSP
-    and "SW_ALIGN_MAX 768" in DSP,
-    "the slowed note uses a 512-frame grain and the sped-up note a 2048-frame "
-    "grain, and a restart searches ±768 frames for a matching phase",
+    "#define SW_LAG_NEAR 96u" in DSP
+    and "#define SW_LAG_WIDE 441u" in DSP
+    and "sw_onset(state" in DSP
+    and "(int)(pair_beats * 2.0f + 0.5f)" in FEATURE,
+    "each sixteenth is pinned by one splice: within 2 ms of the grid when a "
+    "hit is there, anywhere in half a 50 hz period when not; the feature "
+    "tells the dsp how many sixteenths a note holds",
 )
 require(
     "#include <math.h>" not in FEATURE and "#include <math.h>" not in DSP
