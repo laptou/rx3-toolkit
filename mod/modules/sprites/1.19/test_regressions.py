@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 MODULE = (Path(__file__).resolve().parent / "module.sh").read_text()
 FEATURE = (Path(__file__).resolve().parent / "rx3_sprites_feature.h").read_text()
+GR = (ROOT / "mod/modules/core/1.19/rx3_ds_gr.h").read_text()
 HOOK = (ROOT / "mod/modules/core/1.19/rx3_core_hook.c").read_text()
 
 
@@ -41,9 +42,11 @@ require(
     "the performance core must own the sprite callbacks",
 )
 require(
-    "WAVE_WINDOW_ID ((unsigned long)0x02498d44)" in FEATURE
-    and "DS_GR_CREATE_WINDOW ((unsigned long)0x001a2634)" in FEATURE
-    and "DS_GR_LOCK_WINDOW ((unsigned long)0x001a1c48)" in FEATURE
+    "WAVE_WINDOW_ID ((unsigned long)0x02498d44)" in GR
+    and "DS_GR_CREATE_WINDOW ((unsigned long)0x001a2634)" in GR
+    and "DS_GR_LOCK_WINDOW ((unsigned long)0x001a1c48)" in GR
+    and '#include "../../core/1.19/rx3_ds_gr.h"' in FEATURE
+    and "rx3_gr_open(&window->gr" in FEATURE
     and "original_draw_image" not in FEATURE
     and "IMAGE_TABLE_POINTER" not in FEATURE
     and "DirectFB" not in FEATURE
@@ -52,21 +55,20 @@ require(
     "its own ds_gr window, not through pal_draw_image",
 )
 require(
-    "static const uint32_t sprite_z_slots[] = { 0x3eu, 0x3du, 0x3cu, 0x3bu };"
-    in FEATURE
-    and "result == DS_GR_Z_TAKEN" in FEATURE,
+    "static const uint32_t rx3_gr_z_slots[] = { 0x3eu, 0x3du, 0x3cu, 0x3bu };"
+    in GR
+    and "result == DS_GR_Z_TAKEN" in GR,
     "the overlay z must sit above the waveform (0x4f) and skip taken slots",
 )
 require(
-    "screen_up = *(void *volatile *)WAVE_WINDOW_ID != 0;" in FEATURE
-    and "!sprite_deck_has_wave(deck)" in FEATURE
+    "screen_up = rx3_wave_screen_up();" in FEATURE
+    and "!rx3_wave_deck_loaded(deck)" in FEATURE
     and "sprite_window_close(window);" in FEATURE,
     "the overlay must close whenever the waveform screen or the deck's "
     "waveform is gone, or it floats over the browse page",
 )
 require(
-    "SPRITE_KEY_ARGB 0xffff00ffu" in FEATURE
-    and "SPRITE_KEY_ARGB);" in FEATURE,
+    "DS_GR_KEY_ARGB 0xffff00ffu" in GR and "DS_GR_KEY_ARGB);" in GR,
     "index 0 must be keyed out by the window's colour key",
 )
 require(

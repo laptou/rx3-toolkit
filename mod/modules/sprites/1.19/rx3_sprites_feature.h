@@ -13,48 +13,13 @@
 #define RX3_SPRITES_FEATURE_H
 
 #include "rx3_sprites_logic.h"
+#include "../../core/1.19/rx3_ds_gr.h"
 
 #define SPRITE_PACK_LIMIT 64u
 #define SPRITE_FILE_LIMIT (1024u * 1024u)
-#define SPRITE_KEY_RGB565 0xf81fu
-#define SPRITE_KEY_ARGB 0xffff00ffu
 #define SPRITE_FRAME_MS 33u
 #define SPRITE_RETRY_MS 1000u
 
-/* ds_gr window api, see ui_PLAYMODE_Set for rbp's own use. */
-#define DS_GR_CREATE_WINDOW ((unsigned long)0x001a2634)
-#define DS_GR_DESTROY_WINDOW ((unsigned long)0x001a2990)
-#define DS_GR_LOCK_WINDOW ((unsigned long)0x001a1c48)
-#define DS_GR_UNLOCK_WINDOW ((unsigned long)0x001a1cb0)
-#define DS_GR_SET_WINDOW_OPTION ((unsigned long)0x001a061c)
-#define DS_GR_SET_WINDOW_COLOR ((unsigned long)0x001a0680)
-#define DS_GR_FORMAT_RGB565 9u
-#define DS_GR_OPTION_SET 1u
-#define DS_GR_OPTION_VISIBLE 8u
-#define DS_GR_COLOR_KEY 2u
-#define DS_GR_Z_TAKEN 4
-
-/* rbp's scrolling waveform window: both decks in one 892x444 window at
-   (190, 47), deck 0 in the top 222 rows. the handle is 0 whenever the
-   waveform screen is not built. the per-deck words are non-zero while that
-   deck has waveform data. */
-#define WAVE_WINDOW_ID ((unsigned long)0x02498d44)
-#define WAVE_DECK0_DATA ((unsigned long)0x05902198)
-#define WAVE_DECK1_DATA ((unsigned long)0x05930fb4)
-#define WAVE_LEFT 190
-#define WAVE_TOP 47
-#define WAVE_WIDTH 892
-#define WAVE_STRIP 222
-
-typedef int (*ds_gr_create_window_fn)(void **window, uint32_t *info);
-typedef int (*ds_gr_window_fn)(void *window);
-typedef int (*ds_gr_lock_window_fn)(void *window, void **pixels, int *pitch);
-typedef int (*ds_gr_set_option_fn)(void *window, uint32_t mode, uint32_t bits);
-typedef int (*ds_gr_set_color_fn)(void *window, uint32_t kind, uint32_t colour);
-
-/* free z slots under rbp's waveform (0x4f) and counter windows (0x41-0x4e).
-   a lower z composites later, so on top. */
-static const uint32_t sprite_z_slots[] = { 0x3eu, 0x3du, 0x3cu, 0x3bu };
 struct __attribute__((packed)) rx3_sprite_file_header {
     char magic[8];
     uint16_t version;
@@ -133,11 +98,7 @@ struct sprite_deck {
 
 /* one overlay window per deck. shown is the frame last blitted, or -1. */
 struct sprite_window {
-    void *handle;
-    int x;
-    int y;
-    unsigned width;
-    unsigned height;
+    struct rx3_gr_window gr;
     int shown;
     unsigned failed_ms;
 };
@@ -542,11 +503,11 @@ static uint16_t *sprite_expand(const struct sprite_job *job, size_t *bytes_out)
         uint16_t *target = output + (size_t)frame * pixels_per_frame;
         for (offset = 0; offset < pixels_per_frame; offset++) {
             unsigned colour_index = source[offset];
-            uint16_t colour = SPRITE_KEY_RGB565;
+            uint16_t colour = DS_GR_KEY_RGB565;
             if (colour_index && colour_index < job->palette_count) {
                 memcpy(&colour, job->palette + colour_index * 2u, sizeof(colour));
-                if (colour == SPRITE_KEY_RGB565)
-                    colour = SPRITE_KEY_RGB565 - 1u;
+                if (colour == DS_GR_KEY_RGB565)
+                    colour = DS_GR_KEY_RGB565 - 1u;
             }
             target[offset] = colour;
         }
@@ -663,79 +624,25 @@ static void sprite_place(unsigned deck, const struct sprite_deck *state,
 
 static void sprite_window_close(struct sprite_window *window)
 {
-    if (window->handle)
-        ((ds_gr_window_fn)DS_GR_DESTROY_WINDOW)(window->handle);
-    window->handle = 0;
+    rx3_gr_close(&window->gr);
     window->shown = -1;
 }
 
-/* same window setup as rbp's waveform: rgb565 on plane 0, visible, with
-   magenta keyed out. tries each free z until one is not taken. */
-static int sprite_window_open(struct sprite_window *window, int x, int y,
-                              unsigned width, unsigned height)
-{
-    unsigned slot;
-    for (slot = 0; slot < sizeof(sprite_z_slots) / sizeof(sprite_z_slots[0]);
-         slot++) {
-        uint32_t info[13];
-        void *handle = 0;
-        int result;
-        memset(info, 0, sizeof(info));
-        info[2] = (uint32_t)width | ((uint32_t)height << 16);
-        info[3] = DS_GR_FORMAT_RGB565;
-        info[4] = 0u;
-        info[5] = sprite_z_slots[slot];
-        info[7] = (uint32_t)x;
-        info[8] = (uint32_t)y;
-        result = ((ds_gr_create_window_fn)DS_GR_CREATE_WINDOW)(&handle, info);
-        if (result == DS_GR_Z_TAKEN)
-            continue;
-        if (result || !handle)
-            return -1;
-        ((ds_gr_set_option_fn)DS_GR_SET_WINDOW_OPTION)(handle, DS_GR_OPTION_SET,
-                                                       DS_GR_OPTION_VISIBLE);
-        ((ds_gr_set_option_fn)DS_GR_SET_WINDOW_OPTION)(handle, DS_GR_OPTION_SET,
-                                                       1u);
-        ((ds_gr_set_color_fn)DS_GR_SET_WINDOW_COLOR)(handle, DS_GR_COLOR_KEY,
-                                                     SPRITE_KEY_ARGB);
-        window->handle = handle;
-        window->x = x;
-        window->y = y;
-        window->width = width;
-        window->height = height;
-        window->shown = -1;
-        return 0;
-    }
-    return -1;
-}
-
-/* copies one frame into the window. setting the visible option again is what
-   marks the window dirty for rbp's compositor. */
 static void sprite_window_blit(struct sprite_window *window,
                                const struct sprite_deck *state, unsigned frame)
 {
     const uint16_t *source =
         state->frames + (size_t)frame * state->width * state->height;
-    uint8_t *pixels = 0;
-    int pitch = 0;
+    int pitch;
+    uint8_t *pixels = rx3_gr_lock(&window->gr, &pitch);
     unsigned row;
-    if (((ds_gr_lock_window_fn)DS_GR_LOCK_WINDOW)(window->handle,
-                                                  (void **)&pixels, &pitch))
+    if (!pixels)
         return;
-    if (pixels && pitch >= (int)(state->width * 2u)) {
-        for (row = 0; row < state->height; row++)
-            memcpy(pixels + (size_t)row * (unsigned)pitch,
-                   source + (size_t)row * state->width, state->width * 2u);
-        ((ds_gr_set_option_fn)DS_GR_SET_WINDOW_OPTION)(
-            window->handle, DS_GR_OPTION_SET, DS_GR_OPTION_VISIBLE);
-        window->shown = (int)frame;
-    }
-    ((ds_gr_window_fn)DS_GR_UNLOCK_WINDOW)(window->handle);
-}
-
-static int sprite_deck_has_wave(unsigned deck)
-{
-    return *(volatile int *)(deck ? WAVE_DECK1_DATA : WAVE_DECK0_DATA) != 0;
+    for (row = 0; row < state->height; row++)
+        memcpy(pixels + (size_t)row * (unsigned)pitch,
+               source + (size_t)row * state->width, state->width * 2u);
+    rx3_gr_present(&window->gr);
+    window->shown = (int)frame;
 }
 
 /* keeps each deck's window in step with the waveform screen: open while the
@@ -748,24 +655,25 @@ static void sprite_update_deck(unsigned deck, int screen_up, unsigned now)
     int x;
     int y;
     if (!screen_up || !state->live || !state->frames ||
-        !sprite_deck_has_wave(deck) || sprite_frame_now(state, &frame)) {
+        !rx3_wave_deck_loaded(deck) || sprite_frame_now(state, &frame)) {
         sprite_window_close(window);
         return;
     }
     sprite_place(deck, state, &x, &y);
-    if (window->handle && (window->x != x || window->y != y ||
-                           window->width != state->width ||
-                           window->height != state->height))
+    if (window->gr.handle &&
+        (window->gr.x != x || window->gr.y != y ||
+         window->gr.width != state->width || window->gr.height != state->height))
         sprite_window_close(window);
-    if (!window->handle) {
+    if (!window->gr.handle) {
         if (window->failed_ms && now - window->failed_ms < SPRITE_RETRY_MS)
             return;
-        if (sprite_window_open(window, x, y, state->width, state->height)) {
+        if (rx3_gr_open(&window->gr, x, y, state->width, state->height)) {
             window->failed_ms = now ? now : 1u;
             sprite_note(256u, "sprite window could not be created");
             return;
         }
         window->failed_ms = 0;
+        window->shown = -1;
         sprite_note(deck ? 8u : 4u,
                     deck ? "sprite window open deck 1" : "sprite window open deck 0");
     }
@@ -789,7 +697,7 @@ static void sprites_feature_after_image(void *render, void *image,
     if (now - sprite_tick_ms < SPRITE_FRAME_MS)
         return;
     sprite_tick_ms = now;
-    screen_up = *(void *volatile *)WAVE_WINDOW_ID != 0;
+    screen_up = rx3_wave_screen_up();
     sprite_update_deck(0u, screen_up, now);
     sprite_update_deck(1u, screen_up, now);
 }
