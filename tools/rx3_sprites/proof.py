@@ -34,7 +34,7 @@ class FormatProof:
 
 
 def proven_format() -> FormatProof:
-    """Firmware 1.19 hard-mask, measured from a passing format.proof.
+    """The pack encoding. The player expands it to RGB565 when it loads a pack.
 
     format 2, a palette, 8 bits per pixel, transparent index 0,
     16-bit colour entries.
@@ -63,7 +63,7 @@ def parse_format(text: str) -> FormatProof:
     )
     if proof != proven_format():
         raise ProofError(
-            "format proof must be the measured one: format 2, palette 1, "
+            "format proof must be the pack encoding: format 2, palette 1, "
             "8 bpp, transparent 0, entry 2"
         )
     return proof

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 # Hardware validation
 
-These checks are run on an XDJ-RX3 with firmware 1.19. The hard-mask format below is the one a passing `format.proof` reported. Anchors are still per player: a missing anchor file keeps deck sprites off. Do not invent an anchor from a guess.
+These checks are run on an XDJ-RX3 with firmware 1.19. `format.proof` names the pack encoding below. It is not a player image format: record format 2 is direct RGB565, so the player expands packs itself. Anchors are still per player: a missing anchor file keeps deck sprites off. Do not invent an anchor from a guess.
 
 Nothing in this procedure writes internal flash. Boot without the stick, or power-cycle, to return to stock.
 
@@ -33,7 +33,7 @@ transparent 0
 entry 2
 ```
 
-That is the measured format. `anchors.proof` starts with `RX3ANC1` and then one line per anchor:
+That is the pack encoding. `anchors.proof` starts with `RX3ANC1` and then one line per anchor:
 
 ```
 layer N id N deck 0

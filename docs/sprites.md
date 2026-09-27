@@ -35,7 +35,7 @@ A source folder holds `manifest.json` plus either a PNG sequence or one sheet.
 | frames_per_beat, beats_per_loop | their product equals `frame_count` for `beat` |
 | anchor | `center` or `bottom-center` |
 
-Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. The measured player format is 8 bits per pixel.
+Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. Packs store 8-bit indices. The player expands each frame to RGB565 when it loads the pack. Index 0 is drawn black, because no image format with a mask is proven yet.
 
 Repeat a write from the command line. Diagnostics go to stderr. `-v` prints the summary, `-vv` also prints each PNG name, and `-q` keeps errors only.
 
@@ -44,7 +44,7 @@ python -m tools.rx3_sprites preview --source DIR -v
 python -m tools.rx3_sprites write --source DIR --dest DIR
 ```
 
-`--format-proof` must be the measured file below. Omit it and the command writes that file. `--anchors` is an explicit proof. Omit it and the command reads `RX3_RUNTIME/sprite-trace.log` on the destination, when that file is there, and writes `anchors.proof` for each waveform that stays on one deck in both layouts. Upper left is deck 0. Lower right is deck 1. If the log has no such waveform, the player loads the pack and draws nothing.
+`--format-proof` must be the pack encoding below. Omit it and the command writes that file. `--anchors` is an explicit proof. Omit it and the command reads `RX3_RUNTIME/sprite-trace.log` on the destination, when that file is there, and writes `anchors.proof` for each waveform that stays on one deck in both layouts. Upper left is deck 0. Lower right is deck 1. If the log has no such waveform, the player loads the pack and draws nothing.
 
 ```
 RX3FMT1
