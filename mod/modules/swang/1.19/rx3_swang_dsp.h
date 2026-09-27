@@ -23,9 +23,9 @@
 #endif
 
 /* the largest delay is a quarter of a pair, and the longest pair (swung
-   quarter notes) is half a beat: 8269 frames at 40 bpm. the ring holds that
+   quarter notes) is two beats: 33075 frames at 40 bpm. the ring holds that
    plus a grain. */
-#define SW_RING 16384u
+#define SW_RING 65536u
 #define SW_RING_MASK (SW_RING - 1u)
 /* 30 ms grains: short enough that a drum hit is not heard twice, long
    enough that bass keeps its pitch. even, so the two triangles sum to one
