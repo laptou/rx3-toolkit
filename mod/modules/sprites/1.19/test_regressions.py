@@ -61,6 +61,10 @@ require(
     "the overlay z must sit above the waveform (0x4f) and skip taken slots",
 )
 require(
+    "RX3_GR_ON_TOP" in FEATURE,
+    "the sprite is the top overlay, above the sidechain meter",
+)
+require(
     "screen_up = rx3_wave_screen_up();" in FEATURE
     and "state->live && state->pixels && rx3_wave_deck_loaded(deck)" in FEATURE
     and "int lead = screen_up ? sprite_pick_lead() : -1;" in FEATURE

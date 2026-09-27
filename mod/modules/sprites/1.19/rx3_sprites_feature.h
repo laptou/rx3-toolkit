@@ -702,7 +702,8 @@ static void sprite_update(int screen_up, unsigned now)
     if (!window->gr.handle) {
         if (window->failed_ms && now - window->failed_ms < SPRITE_RETRY_MS)
             return;
-        if (rx3_gr_open(&window->gr, x, y, box_wide, box_tall)) {
+        if (rx3_gr_open(&window->gr, x, y, box_wide, box_tall,
+                        RX3_GR_ON_TOP)) {
             window->failed_ms = now ? now : 1u;
             sprite_note(256u, "sprite window could not be created");
             return;

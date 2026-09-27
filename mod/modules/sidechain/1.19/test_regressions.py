@@ -115,4 +115,9 @@ require(
     "when the feature is removed",
 )
 
+require(
+    "RX3_GR_BELOW" in METER,
+    "the meter stacks below the sprite, which stays the top layer",
+)
+
 print("Sidechain regression guards: OK")

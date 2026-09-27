@@ -73,14 +73,23 @@ static void rx3_gr_close(struct rx3_gr_window *window)
     window->handle = 0;
 }
 
-/* rgb565 on plane 0, visible, magenta keyed out. tries each free z until
-   one is not taken. */
+#define RX3_GR_Z_SLOT_COUNT (sizeof(rx3_gr_z_slots) / sizeof(rx3_gr_z_slots[0]))
+
+/* which end of the free slots a window takes. windows opened on top always
+   stack above those opened below, whatever order they open in. */
+enum rx3_gr_stack { RX3_GR_BELOW, RX3_GR_ON_TOP };
+
+/* rgb565 on plane 0, visible, magenta keyed out. tries each free z, from
+   the stack's end, until one is not taken. */
 static int rx3_gr_open(struct rx3_gr_window *window, int x, int y,
-                       unsigned width, unsigned height)
+                       unsigned width, unsigned height,
+                       enum rx3_gr_stack stack)
 {
-    unsigned slot;
-    for (slot = 0; slot < sizeof(rx3_gr_z_slots) / sizeof(rx3_gr_z_slots[0]);
-         slot++) {
+    unsigned tried;
+    for (tried = 0; tried < RX3_GR_Z_SLOT_COUNT; tried++) {
+        unsigned slot = stack == RX3_GR_ON_TOP
+                            ? RX3_GR_Z_SLOT_COUNT - 1u - tried
+                            : tried;
         uint32_t info[13];
         void *handle = 0;
         int result;

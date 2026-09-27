@@ -156,7 +156,7 @@ static void sc_meter_tick(void)
         if (sc_meter_failed_ms && now - sc_meter_failed_ms < 1000u)
             return;
         if (rx3_gr_open(&sc_meter_window, SC_METER_X, SC_METER_Y,
-                        SC_METER_WIDTH, SC_METER_HEIGHT)) {
+                        SC_METER_WIDTH, SC_METER_HEIGHT, RX3_GR_BELOW)) {
             sc_meter_failed_ms = now ? now : 1u;
             log_line("sidechain: meter window could not be created");
             return;
