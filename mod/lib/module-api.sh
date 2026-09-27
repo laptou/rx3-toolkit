@@ -199,25 +199,40 @@ _rx3_emit_span()
     done
 }
 
-normalized_rbp_sha1()
+# Whether stock_rbp_stream can run: every word aligned and the size readable.
+stock_rbp_ready()
 {
     _rx3_binary=$1
     _rx3_directory=$2
     awk '$1 % 4 != 0 { unaligned = 1 } END { exit !unaligned }' \
         "$_rx3_directory/order" && return 1
     _rx3_size=$(wc -c < "$_rx3_binary" 2>/dev/null)
-    [ -n "$_rx3_size" ] || return 1
-    {
-        _rx3_previous=0
-        while read -r _rx3_offset _rx3_index; do
-            _rx3_emit_span "$_rx3_previous" "$_rx3_offset"
-            cat "$_rx3_directory/stock$_rx3_index"
-            _rx3_previous=$((_rx3_offset + 4))
-        done < "$_rx3_directory/order"
-        _rx3_emit_span "$_rx3_previous" $((_rx3_size - _rx3_size % 4))
-        [ $((_rx3_size % 4)) -gt 0 ] && dd if="$_rx3_binary" bs=1 \
-            skip=$((_rx3_size - _rx3_size % 4)) 2>/dev/null
-    } | sha1sum | awk '{print $1}'
+    [ -n "$_rx3_size" ]
+}
+
+# `binary` on stdout with every guarded word put back to its stock value.
+# stock_rbp_ready has to have passed for the same arguments.
+stock_rbp_stream()
+{
+    _rx3_binary=$1
+    _rx3_directory=$2
+    _rx3_size=$(wc -c < "$_rx3_binary" 2>/dev/null)
+    _rx3_previous=0
+    while read -r _rx3_offset _rx3_index; do
+        _rx3_emit_span "$_rx3_previous" "$_rx3_offset"
+        cat "$_rx3_directory/stock$_rx3_index"
+        _rx3_previous=$((_rx3_offset + 4))
+    done < "$_rx3_directory/order"
+    _rx3_emit_span "$_rx3_previous" $((_rx3_size - _rx3_size % 4))
+    [ $((_rx3_size % 4)) -gt 0 ] && dd if="$_rx3_binary" bs=1 \
+        skip=$((_rx3_size - _rx3_size % 4)) 2>/dev/null
+    return 0
+}
+
+normalized_rbp_sha1()
+{
+    stock_rbp_ready "$1" "$2" || return 1
+    stock_rbp_stream "$1" "$2" | sha1sum | awk '{print $1}'
 }
 
 # Read one variable out of the running rbp environment. A module uses this to

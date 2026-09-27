@@ -147,6 +147,29 @@ class NormalisedIdentityTests(unittest.TestCase):
                 hashlib.sha1(binary.read_bytes()).hexdigest(),
             )
 
+    def test_the_stock_stream_is_the_stock_binary_byte_for_byte(self):
+        """The logging module copies this stream to the stick for Ghidra."""
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            binary = self.stock_binary(directory)
+            stock = binary.read_bytes()
+            image = bytearray(stock)
+            for module in PATCHING_MODULES:
+                for offset, _stock, patched in WORDS[module]:
+                    image[offset:offset + 4] = patched
+            patched_binary = directory / "rbp-patched"
+            patched_binary.write_bytes(image)
+            copy = directory / "copy.rbp"
+            with tempfile.TemporaryDirectory() as workspace:
+                result = run_shell(
+                    f"{registrations(tuple(PATCHING_MODULES))}\n"
+                    f'extract_guarded_words "{workspace}" || exit 20\n'
+                    f'stock_rbp_ready "{patched_binary}" "{workspace}" || exit 21\n'
+                    f'stock_rbp_stream "{patched_binary}" "{workspace}" > "{copy}"\n'
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(copy.read_bytes(), stock)
+
     def test_a_word_that_is_neither_stock_nor_patched_still_normalises(self):
         """Normalisation cannot tell a foreign write from ours, which is why
         the word-by-word audit runs after it and stops before any write."""
