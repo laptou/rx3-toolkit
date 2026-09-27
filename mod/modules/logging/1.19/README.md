@@ -21,6 +21,15 @@ Each boot writes a new file. The player has no clock, so a file's date does not 
 
 Older boots stay on the stick as `session-0001.txt`, `session-0002.txt`, and so on. `boot.seq` is the count. The player's own output is `rbp-stdout-0007.txt` for the same boot.
 
+If the player crashes, it appends a report to `crash-0007.txt`, named for the boot that started that player. The report has the signal, the registers, the memory map, and the top of the stack. The kernel then writes `core-rbp-<pid>` beside it. A helper program that crashes writes its own core, named for that program. To see where the crash happened, run this on the computer:
+
+```text
+python -m tools.rx3_crash /Volumes/STICK/RX3_RUNTIME/crash-0007.txt \
+  --autoexec /Volumes/STICK/autoexec.bin --key /path/to/aes256.key
+```
+
+The command reads the performance core from that `autoexec.bin`, which carries its debug symbols. It names each hook function and source line. It prints addresses in rbp as they are, because rbp has no symbols.
+
 > [!WARNING]
 > **Eject the drive from the RX3. Do not just pull it out.**
 > While this module is on, the player keeps that log file open for as long as it is playing. Yanking a FAT stick mid-write is how you lose a folder — and the folder you lose might be your music. This is the entire reason the module is off by default.

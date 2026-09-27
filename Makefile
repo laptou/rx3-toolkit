@@ -26,6 +26,10 @@ PAYLOAD_HOOK := $(BUILD_DIR)/librx3_core_payload.so
 AUTOEXEC := $(BUILD_DIR)/autoexec.bin
 PATCH_ARGS := $(foreach patch,$(MODULES),--patch $(patch))
 
+# -g stays in the shipped object, so a crash report is symbolised against the
+# exact library inside the stick's autoexec.bin. keep these flags in step with
+# compile_arm_hook in tools/rx3_runtime/build.py.
+#
 # -fno-builtin-memcmp is load-bearing. At -O2 clang rewrites `memcmp(a,b,n) == 0`
 # into a call to bcmp, which rbp's libc does not export: the hook then fails to
 # load with an undefined symbol and every run silently falls back to stock
@@ -34,7 +38,7 @@ PATCH_ARGS := $(foreach patch,$(MODULES),--patch $(patch))
 CFLAGS := --target=arm-linux-gnueabi -march=armv7-a -marm \
 	-mfloat-abi=softfp -mfpu=neon -fPIC -fno-stack-protector \
 	-fno-builtin-memcmp -fno-builtin-bcmp \
-	-O2 -Wall -Wextra -Werror
+	-O2 -g -Wall -Wextra -Werror
 LDFLAGS := -fuse-ld=lld -shared -nostdlib \
 	-Wl,--hash-style=sysv -Wl,--build-id=none
 
