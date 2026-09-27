@@ -3,19 +3,17 @@
 
 Firmware 1.19. The overlay is optional and off unless you select the sprites module and the USB stick contains `RX3_SPRITES`.
 
+Each deck gets one overlay window, centred on that deck's waveform strip (deck 0 top strip, deck 1 bottom). Anchor 2 rests the sprite on the strip's bottom edge. Index 0 is transparent. `RX3_RUNTIME/sprite-status.log` notes "sprite window open deck N" or "sprite window could not be created".
+
 ## What you put on the stick
 
 ```
 RX3_SPRITES/
   catalog.txt
-  format.proof
-  anchors.proof
   your-name.rx3spr
 ```
 
 `catalog.txt` is one pack filename per line, sorted, with a final newline. Hidden files are ignored. The player does not scan the directory itself.
-
-`format.proof` and `anchors.proof` come from a hardware check. Until both exist and agree with a single layout, deck sprites do not draw. See [hardware validation](hardware-validation.md). Without `anchors.proof` the player still loads the pack and draws nothing, and it records draw lines in `RX3_RUNTIME/sprite-trace.log` on the stick.
 
 The computer does not read Rekordbox analysis files. Beat timing comes from the player.
 
@@ -35,24 +33,13 @@ A source folder holds `manifest.json` plus either a PNG sequence or one sheet.
 | frames_per_beat, beats_per_loop | their product equals `frame_count` for `beat` |
 | anchor | `center` or `bottom-center` |
 
-Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. Packs store 8-bit indices. The player expands each frame to RGB565 when it loads the pack. Index 0 becomes magenta `0xF81F`, and the draw asks rbp to skip that colour. An opaque pixel of exactly that colour is moved one step to `0xF81E`.
+Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. Packs store 8-bit indices. The player expands each frame to RGB565 when it loads the pack. Index 0 becomes magenta `0xF81F`, and the window colour key skips that colour. An opaque pixel of exactly that colour is moved one step to `0xF81E`.
 
 Repeat a write from the command line. Diagnostics go to stderr. `-v` prints the summary, `-vv` also prints each PNG name, and `-q` keeps errors only.
 
 ```sh
 python -m tools.rx3_sprites preview --source DIR -v
 python -m tools.rx3_sprites write --source DIR --dest DIR
-```
-
-`--format-proof` must be the pack encoding below. Omit it and the command writes that file. `--anchors` is an explicit proof. Omit it and the command reads `RX3_RUNTIME/sprite-trace.log` on the destination, when that file is there, and writes `anchors.proof` for each waveform that stays on one deck in both layouts. Upper left is deck 0. Lower right is deck 1. If the log has no such waveform, the player loads the pack and draws nothing.
-
-```
-RX3FMT1
-format 2
-palette 1
-bpp 8
-transparent 0
-entry 2
 ```
 
 The Toolbox **Animated sprites** tab previews the mask and writes the same folder. It does not edit Rekordbox databases or audio files. It warns when the packs exceed the 2 MiB player ceiling. The player still refuses a pack that does not fit.
@@ -71,4 +58,4 @@ Fixed-rate frames follow wall time, so a skipped refresh jumps ahead. Beat-mode 
 
 The address of that clock is recorded only after a firmware 1.19 log shows it advancing one beat per audible beat, jumping on seek or cue, and staying independent of the pitch fader. Until that proof, beat mode logs `sprites: beat clock unavailable` once and draws nothing. Fixed-rate packs still play.
 
-Drawing happens after the stock image, and only when the current image matches a proven waveform anchor. The sprite uses a private image id. Those ids are not rewritten after the first install. A bad pack, a failed mask check, an ambiguous layout, or a memory refusal disables that deck only.
+A bad pack or a memory refusal disables that deck only. Stock drawing and stems keep running.

@@ -12,7 +12,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from tools.rx3_sprites.log import configure
-from tools.rx3_sprites.proof import ProofError, parse_format, proven_format
+from tools.rx3_sprites.proof import proven_format
 from tools.rx3_sprites.provision import ProvisionError, provision
 from tools.rx3_sprites.source import SourceError, compile_source, load_source
 
@@ -28,8 +28,6 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--source", required=True, type=pathlib.Path)
         if name == "write":
             command.add_argument("--dest", required=True, type=pathlib.Path)
-        command.add_argument("--format-proof", type=pathlib.Path)
-        command.add_argument("--anchors", type=pathlib.Path)
         command.add_argument("-v", "--verbose", action="count", default=0)
         command.add_argument("-q", "--quiet", action="count", default=0)
         command.add_argument(
@@ -42,20 +40,17 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else 2
     configure(_level(args))
     try:
-        format_text = _format_text(args.format_proof)
-        anchors = "" if args.anchors is None else args.anchors.read_text(encoding="utf-8")
         if args.command == "preview":
-            proof = parse_format(format_text)
             loaded = load_source(args.source)
-            pack = compile_source(loaded, proof)
+            pack = compile_source(loaded, proven_format())
             mode = "fixed rate" if pack.mode == 1 else "beat clock"
             logging.getLogger("rx3.sprites").info(
                 "%s: %sx%s, %s frames, %s, palette %s bytes",
                 pack.name, pack.width, pack.height, pack.frame_count, mode, len(pack.palette),
             )
             return 0
-        provision(args.source, args.dest, format_text, anchors)
-    except (OSError, SourceError, ProofError, ProvisionError) as error:
+        provision(args.source, args.dest)
+    except (OSError, SourceError, ProvisionError) as error:
         logging.getLogger("rx3.sprites").error("%s", error)
         return 2
     return 0
@@ -73,12 +68,6 @@ def _level(args: argparse.Namespace) -> int:
     if args.verbose == 1:
         return logging.INFO
     return logging.WARNING
-
-
-def _format_text(path: pathlib.Path | None) -> str:
-    if path is None:
-        return proven_format().text()
-    return path.read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -15,8 +15,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(_HERE))
     sys.path.insert(0, str(_HERE.parents[1]))
 
-from tools.rx3_sprites.fixture import proof_8
-from tools.rx3_sprites.proof import ProofError, parse_format
+from tools.rx3_sprites.proof import proven_format
 from tools.rx3_sprites.provision import ProvisionError
 from tools.rx3_sprites.provision import provision as write_sprites
 from tools.rx3_sprites.source import SourceError, compile_source, load_source
@@ -31,8 +30,6 @@ class SpriteStudioPane(ttk.Frame):
         super().__init__(master, padding=16)
         self.source = tk.StringVar()
         self.destination = tk.StringVar()
-        self.format_text = tk.StringVar(value=proof_8().text().strip())
-        self.anchor_text = tk.StringVar()
         self.status = tk.StringVar(value="Choose a sprite folder.")
         self._rows()
 
@@ -48,19 +45,12 @@ class SpriteStudioPane(ttk.Frame):
             ttk.Label(self, text=label, width=16).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(self, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=4)
             ttk.Button(self, text="Browse", command=command).grid(row=row, column=2, padx=(8, 0))
-        ttk.Label(self, text="Format proof").grid(row=2, column=0, sticky="nw", pady=4)
-        self.format_box = tk.Text(self, height=6, width=40)
-        self.format_box.grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
-        self.format_box.insert("1.0", self.format_text.get())
-        ttk.Label(self, text="Anchor proof").grid(row=3, column=0, sticky="nw", pady=4)
-        self.anchor_box = tk.Text(self, height=5, width=40)
-        self.anchor_box.grid(row=3, column=1, columnspan=2, sticky="ew", pady=4)
         buttons = ttk.Frame(self)
-        buttons.grid(row=4, column=0, columnspan=3, sticky="w", pady=8)
+        buttons.grid(row=2, column=0, columnspan=3, sticky="w", pady=8)
         ttk.Button(buttons, text="Preview", command=self.preview).pack(side="left")
         ttk.Button(buttons, text="Write USB folder", command=self.write).pack(side="left", padx=8)
         ttk.Label(self, textvariable=self.status, wraplength=640).grid(
-            row=5, column=0, columnspan=3, sticky="w"
+            row=3, column=0, columnspan=3, sticky="w"
         )
         self.columnconfigure(1, weight=1)
 
@@ -79,35 +69,28 @@ class SpriteStudioPane(ttk.Frame):
 
     def preview(self) -> None:
         try:
-            summary = preview_summary(
-                pathlib.Path(self.source.get()),
-                self.format_box.get("1.0", "end"),
-            )
-        except (SourceError, ProofError, OSError) as error:
+            summary = preview_summary(pathlib.Path(self.source.get()))
+        except (SourceError, OSError) as error:
             self.status.set(str(error))
             return
         self.status.set(summary)
 
     def write(self) -> None:
-        format_text = self.format_box.get("1.0", "end")
         try:
             message = provision(
                 pathlib.Path(self.source.get()),
                 pathlib.Path(self.destination.get()),
-                format_text,
-                self.anchor_box.get("1.0", "end"),
             )
-        except (SourceError, ProofError, ProvisionError, OSError) as error:
+        except (SourceError, ProvisionError, OSError) as error:
             self.status.set(str(error))
             messagebox.showerror("Sprites", str(error))
             return
         self.status.set(message)
 
 
-def preview_summary(source: pathlib.Path, format_text: str) -> str:
-    proof = parse_format(format_text)
+def preview_summary(source: pathlib.Path) -> str:
     loaded = load_source(source)
-    pack = compile_source(loaded, proof)
+    pack = compile_source(loaded, proven_format())
     mode = "fixed rate" if pack.mode == 1 else "beat clock"
     return (
         f"{pack.name}: {pack.width}x{pack.height}, {pack.frame_count} frames, "
@@ -115,13 +98,8 @@ def preview_summary(source: pathlib.Path, format_text: str) -> str:
     )
 
 
-def provision(
-    source: pathlib.Path,
-    destination: pathlib.Path,
-    format_text: str,
-    anchor_text: str,
-) -> str:
-    return write_sprites(source, destination, format_text, anchor_text)
+def provision(source: pathlib.Path, destination: pathlib.Path) -> str:
+    return write_sprites(source, destination)
 
 
 def self_test() -> None:
@@ -148,10 +126,7 @@ def self_test() -> None:
             "beats_per_loop": 0,
             "anchor": "bottom-center",
         }), encoding="utf-8")
-        message = provision(
-            source, root / "usb", proof_8().text(),
-            "RX3ANC1\nlayer 1 id 2 deck 0\n",
-        )
+        message = provision(source, root / "usb")
         if "sprites" not in message:
             raise RuntimeError(message)
         if not (root / "usb" / "RX3_SPRITES" / "dot.rx3spr").is_file():
