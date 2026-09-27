@@ -38,9 +38,9 @@ LOG_FILE = "tmp/rx3-stems.log"
 READY_FILE = "tmp/rx3-performance.ready"
 PRIVATE_DIR = "root/pdj"
 
-# NS_GetImageInfoByID: movw r3,#0x15cc -> movw r3,#0x1603. The same guarded
+# NS_GetImageInfoByID: movw r3,#0x15cc -> movw r3,#0x1703. The same guarded
 # pre-launch rewrite core/module.sh registers on a device.
-IMAGE_TABLE_PATCH = (1874220, "cc3501e3", "033601e3", "image-table")
+IMAGE_TABLE_PATCH = (1874220, "cc3501e3", "036701e3", "image-table")
 
 ASSETS = (
     "key-selected",

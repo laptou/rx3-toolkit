@@ -160,10 +160,10 @@ for asset in (
     require(asset in CORE_MANIFEST, f"{asset} must be packaged in autoexec")
 require(
     "register_patch 1874220 '\\314\\065\\001\\343' "
-    "'\\003\\066\\001\\343' image-table-private-ids"
+    "'\\003\\147\\001\\343' image-table-private-ids"
         in CORE_MODULE
     and "STOCK_IMAGE_COUNT 0x15cdu" in HOOK
-    and "EXTENDED_IMAGE_COUNT 0x1604u" in HOOK
+    and "EXTENDED_IMAGE_COUNT 0x1704u" in HOOK
     and "memcpy(table, stock_table, STOCK_IMAGE_COUNT * 44u);" in HOOK
     and "data_offset += relocation;" in HOOK
     and "*(uint8_t **)IMAGE_TABLE_POINTER = table;" in HOOK

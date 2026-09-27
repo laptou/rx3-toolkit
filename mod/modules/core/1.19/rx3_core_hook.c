@@ -93,7 +93,9 @@
 #define TAB_IMAGE_BYTES 18000u
 #define TAB_IMAGE_COUNT 4u
 #define STOCK_IMAGE_COUNT 0x15cdu
-#define EXTENDED_IMAGE_COUNT 0x1604u
+/* 0x1600..0x1603 are the tabs. 0x1604..0x1702 are sprite frames.
+   0x1703 is the hard-mask probe. the bound is the last legal id. */
+#define EXTENDED_IMAGE_COUNT 0x1704u
 #define IMAGE_TABLE_POINTER ((unsigned long)0x05a14f60)
 #define TAB_KEY_PATH "/root/pdj/rx3-key-selected.rgb565"
 #define TAB_STEMS_PATH "/root/pdj/rx3-stems-selected.rgb565"
@@ -267,6 +269,7 @@ static volatile unsigned int stock_tab_backing_ready;
 static uint8_t stock_tab_backing[0x54];
 static volatile unsigned int tab_assets_ready;
 static volatile unsigned int tab_assets_installing;
+static volatile int sprite_overlay_draw;
 static volatile unsigned int initial_performance_refresh_done;
 static volatile unsigned long audio_start_calls;
 static volatile uint8_t performance_window;
@@ -347,8 +350,22 @@ static void keyshift_feature_track_did_load(unsigned int deck, void *reader,
                                             const void *track_info);
 static const struct rx3_panel_feature keyshift_panel;
 static const struct rx3_panel_feature stems_panel;
+static int sprites_feature_configured(void);
+static int sprites_feature_install(void);
+static void sprites_feature_remove(void);
+static void sprites_feature_track_will_load(unsigned int deck, void *reader,
+                                            const void *track_info);
+static void sprites_feature_track_did_load(unsigned int deck, void *reader,
+                                           const void *track_info);
+static void sprites_feature_destroy_deck(unsigned int deck);
+static void sprites_feature_playhead(unsigned int deck, long position);
+static void sprites_feature_after_image(void *render, void *image,
+                                       uint16_t window_layer, uint32_t image_id);
+static void rx3_notify_playhead(unsigned int deck, long position);
+static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
+                            uint32_t image_id);
 
-#define RUNTIME_FEATURE_COUNT 2u
+#define RUNTIME_FEATURE_COUNT 3u
 
 static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
@@ -356,13 +373,20 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         keyshift_feature_configured, keyshift_feature_install,
         keyshift_feature_remove, 0, keyshift_feature_track_did_load,
         rx3_keyshift_start_audio, rx3_keyshift_report,
-        rx3_keyshift_destroy_deck
+        rx3_keyshift_destroy_deck, 0, 0
     },
     {
         "stems", 0, &stems_panel,
         stems_feature_configured, stems_feature_install,
         stems_feature_remove, stems_feature_track_will_load,
-        stems_feature_track_did_load, 0, 0, stems_feature_destroy_deck
+        stems_feature_track_did_load, 0, 0, stems_feature_destroy_deck, 0, 0
+    },
+    {
+        "sprites", 0, 0,
+        sprites_feature_configured, sprites_feature_install,
+        sprites_feature_remove, sprites_feature_track_will_load,
+        sprites_feature_track_did_load, 0, 0, sprites_feature_destroy_deck,
+        sprites_feature_playhead, sprites_feature_after_image
     }
 };
 
@@ -513,6 +537,7 @@ static void refresh_performance_ui(void);
 static int read_exactly(int fd, void *destination, size_t length);
 
 static uint8_t tab_image_pixels[TAB_IMAGE_COUNT][TAB_IMAGE_BYTES];
+static uint8_t sprite_placeholder[2];
 
 static void install_tab_assets(void)
 {
@@ -587,6 +612,23 @@ static void install_tab_assets(void)
         memcpy(record + 4u, &width, sizeof(width));
         memcpy(record + 6u, &height, sizeof(height));
         record[0x18u] = 1u; /* RGB565 */
+        record[0x19u] = 0u;
+        memcpy(record + 0x20u, &pixels, sizeof(pixels));
+        memcpy(record + 0x24u, &no_palette, sizeof(no_palette));
+    }
+
+    /* unused sprite ids stay valid images until a pack replaces one,
+       before that id is drawn. a zero record would be a bad lookup. */
+    for (unsigned int id = TAB_IMAGE_KEY_NONE + 1u; id < EXTENDED_IMAGE_COUNT; id++) {
+        uint8_t *record = table + id * 44u;
+        uint16_t one = 1u;
+        uint32_t pixels = (uint32_t)(unsigned long)sprite_placeholder -
+                          (uint32_t)(unsigned long)table;
+        uint32_t no_palette = 0u;
+        memcpy(record, table + 0x1598u * 44u, 44u);
+        memcpy(record + 4u, &one, sizeof(one));
+        memcpy(record + 6u, &one, sizeof(one));
+        record[0x18u] = 1u;
         record[0x19u] = 0u;
         memcpy(record + 0x20u, &pixels, sizeof(pixels));
         memcpy(record + 0x24u, &no_palette, sizeof(no_palette));
@@ -1321,6 +1363,10 @@ static void capture_pad_text_template(const void *text, uint16_t window_layer)
 static void hooked_draw_image(void *render, void *image)
 {
     image_draw_calls++;
+    if (sprite_overlay_draw) {
+        original_draw_image(render, image);
+        return;
+    }
     if (RX3_DIAGNOSTIC_ONLY) {
         original_draw_image(render, image);
         return;
@@ -1398,6 +1444,7 @@ static void hooked_draw_image(void *render, void *image)
 
     if (image_id != 0x15c9u && image_id != 0x15cau) {
         original_draw_image(render, image);
+        rx3_notify_image(render, image, window_layer, image_id);
         return;
     }
     if (!text_template_ready) {
@@ -2006,11 +2053,32 @@ static void apply_mix(struct stems_deck_context *context,
     }
 }
 
+static void rx3_notify_playhead(unsigned int deck, long position)
+{
+    unsigned int index;
+    if (deck >= 2u)
+        return;
+    for (index = 0; index < RUNTIME_FEATURE_COUNT; index++)
+        if (runtime_features[index].active && runtime_features[index].playhead)
+            runtime_features[index].playhead(deck, position);
+}
+
+static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
+                            uint32_t image_id)
+{
+    unsigned int index;
+    for (index = 0; index < RUNTIME_FEATURE_COUNT; index++)
+        if (runtime_features[index].active && runtime_features[index].after_image)
+            runtime_features[index].after_image(render, image, window_layer, image_id);
+}
+
 #include "../../keyshift/1.19/rx3_keyshift.h"
 
 /* Shared hook replacement. Feature-specific hooks are composed below. */
 #include "../../keyshift/1.19/rx3_keyshift_feature.h"
 #include "../../stems/1.19/rx3_stems_feature.h"
+#define RX3_HOOK_TYPES 1
+#include "../../sprites/1.19/rx3_sprites_feature.h"
 
 static int hooked_load(void *reader, const void *track_info)
 {
@@ -2128,6 +2196,9 @@ __attribute__((constructor)) static void initialize(void)
     stems_dir = getenv("RX3_STEMS_DIR");
     if (stems_dir && !stems_dir[0])
         stems_dir = 0;
+    sprites_dir = getenv("RX3_SPRITES_DIR");
+    if (sprites_dir && !sprites_dir[0])
+        sprites_dir = 0;
     const char *keyshift = getenv("RX3_KEYSHIFT");
     keyshift_enabled = keyshift && keyshift[0] == '1';
     if (!configure_features()) {

@@ -34,6 +34,9 @@ struct rx3_runtime_feature {
     void (*audio_started)(unsigned int sample_rate);
     void (*report)(void);
     void (*destroy_deck)(unsigned int deck);
+    void (*playhead)(unsigned int deck, long position);
+    void (*after_image)(void *render, void *image, uint16_t window_layer,
+                        uint32_t image_id);
 };
 
 #endif /* RX3_FEATURE_API_H */

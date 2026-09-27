@@ -29,10 +29,9 @@ register_runtime_preload "$CORE_LIB"
 # The pre-split name, so a rollback also unloads an older runtime.
 register_runtime_preload /root/pdj/librx3_stems.so
 
-# NS_GetImageInfoByID: movw r3,#0x15cc -> movw r3,#0x1603. This guarded
-# pre-launch word admits four private IDs in the secondary table without
-# hot-patching the renderer function.
-register_patch 1874220 '\314\065\001\343' '\003\066\001\343' image-table-private-ids
+# NS_GetImageInfoByID: movw r3,#0x15cc -> movw r3,#0x1703. This guarded
+# pre-launch word admits the tab ids and the sprite id pool.
+register_patch 1874220 '\314\065\001\343' '\003\147\001\343' image-table-private-ids
 
 core_install_asset()
 {

@@ -256,6 +256,12 @@ static long hooked_timestretch_operate(void *stretch, long position,
     long result = original_timestretch_operate(stretch, position, output,
                                                frames);
     pitch_resampler_output(stretch, output, frames);
+    {
+        int deck = deck_index_for_reader(
+            *(void *const *)((const uint8_t *)stretch + 4u));
+        if (deck >= 0)
+            rx3_notify_playhead((unsigned int)deck, position);
+    }
     return result;
 }
 
@@ -265,6 +271,12 @@ static long hooked_timestretch_fgpr(void *stretch, long position,
 {
     long result = original_timestretch_fgpr(stretch, position, output, frames);
     pitch_resampler_output(stretch, output, frames);
+    {
+        int deck = deck_index_for_reader(
+            *(void *const *)((const uint8_t *)stretch + 4u));
+        if (deck >= 0)
+            rx3_notify_playhead((unsigned int)deck, position);
+    }
     return result;
 }
 
