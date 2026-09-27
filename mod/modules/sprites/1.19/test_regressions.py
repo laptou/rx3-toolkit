@@ -62,10 +62,31 @@ require(
 )
 require(
     "screen_up = rx3_wave_screen_up();" in FEATURE
-    and "!rx3_wave_deck_loaded(deck)" in FEATURE
+    and "state->live && state->pixels && rx3_wave_deck_loaded(deck)" in FEATURE
+    and "int lead = screen_up ? sprite_pick_lead() : -1;" in FEATURE
     and "sprite_window_close(window);" in FEATURE,
-    "the overlay must close whenever the waveform screen or the deck's "
+    "the overlay must close whenever the waveform screen or every deck's "
     "waveform is gone, or it floats over the browse page",
+)
+require(
+    "static struct sprite_window sprite_window =" in FEATURE
+    and "sprite_windows[" not in FEATURE
+    and "*y = WAVE_TOP + WAVE_STRIP - (int)*height / 2;" in FEATURE,
+    "one sprite window, centred on the whole waveform view, not one per deck",
+)
+require(
+    "#define SPRITE_EDGE_LIMIT 256u" in FEATURE
+    and "#define SPRITE_FRAMES_LIMIT 256u" in FEATURE
+    and "#define SPRITE_FILE_LIMIT (4u * 1024u * 1024u)" in FEATURE
+    and "#define SPRITE_BASE_HEIGHT ((WAVE_STRIP * 9) / 10)" in FEATURE,
+    "the player's pack limits must match the host tools, and the sprite is "
+    "scaled to 0.9 of a waveform strip",
+)
+require(
+    "sprite_expand" not in FEATURE
+    and "state->palette[source_row[along >> 16]]" in FEATURE,
+    "frames stay 8-bit and are scaled as drawn; expanding every frame of a "
+    "256-frame 256x256 pack to rgb565 up front would cost 32 MiB",
 )
 require(
     "DS_GR_KEY_ARGB 0xffff00ffu" in GR and "DS_GR_KEY_ARGB);" in GR,

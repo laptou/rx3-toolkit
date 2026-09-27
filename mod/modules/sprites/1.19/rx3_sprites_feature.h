@@ -16,7 +16,13 @@
 #include "../../core/1.19/rx3_ds_gr.h"
 
 #define SPRITE_PACK_LIMIT 64u
-#define SPRITE_FILE_LIMIT (1024u * 1024u)
+#define SPRITE_FILE_LIMIT (4u * 1024u * 1024u)
+#define SPRITE_EDGE_LIMIT 256u
+#define SPRITE_FRAMES_LIMIT 256u
+/* the sprite's height on screen, 0.9 of one deck's waveform strip. */
+#define SPRITE_BASE_HEIGHT ((WAVE_STRIP * 9) / 10)
+/* the loudest pulse grows the sprite by this many thousandths. */
+#define SPRITE_PULSE_MILLI 300u
 #define SPRITE_FRAME_MS 33u
 #define SPRITE_RETRY_MS 1000u
 
@@ -87,19 +93,30 @@ struct sprite_deck {
     unsigned frames_per_beat;
     unsigned beats_per_loop;
     unsigned anchor;
-    uint16_t *frames;
-    size_t frames_bytes;
+    /* the pack file itself; frames stay 8-bit and are scaled as drawn. */
+    void *block;
+    size_t block_bytes;
+    const uint8_t *pixels;
+    unsigned pixel_bytes;
+    uint16_t palette[256];
     unsigned epoch_ms;
     int have_phase;
     uint32_t phase_milli;
+    /* written by the audio thread; a change between ui ticks means playing. */
+    volatile long position;
+    long seen_position;
+    int playing;
     char name[48];
     char previous[48];
 };
 
-/* one overlay window per deck. shown is the frame last blitted, or -1. */
+/* the one overlay window. shown is what was last drawn: deck, frame and
+   size, or -1 after the window opens. */
 struct sprite_window {
     struct rx3_gr_window gr;
     int shown;
+    unsigned shown_deck;
+    unsigned shown_height;
     unsigned failed_ms;
 };
 
@@ -108,7 +125,11 @@ static uint32_t sprites_nonce = 1u;
 static int sprites_owns_timestretch;
 static struct sprite_deck sprite_decks[2];
 static struct sprite_job *volatile sprite_jobs[2];
-static struct sprite_window sprite_windows[2];
+static struct sprite_window sprite_window = { { 0, 0, 0, 0, 0 }, -1, 0, 0, 0 };
+static unsigned sprite_lead;
+/* 0..1000, the low-passed audio level that swells the sprite. */
+static volatile unsigned sprite_pulse_milli;
+static int sprite_pulse_on;
 static unsigned sprite_tick_ms;
 static unsigned sprite_logged;
 
@@ -217,9 +238,9 @@ static int sprite_header_ok(struct rx3_sprite_file_header *header, size_t size)
         return -1;
     if (size != 64u + header->payload_length)
         return -1;
-    if (header->width < 1u || header->width > 64u ||
-        header->height < 1u || header->height > 64u ||
-        header->frame_count < 1u || header->frame_count > 16u)
+    if (header->width < 1u || header->width > SPRITE_EDGE_LIMIT ||
+        header->height < 1u || header->height > SPRITE_EDGE_LIMIT ||
+        header->frame_count < 1u || header->frame_count > SPRITE_FRAMES_LIMIT)
         return -1;
     /* the one pack encoding: 8-bit indices into rgb565 entries, index 0
        transparent. */
@@ -483,45 +504,30 @@ done:
     return 0;
 }
 
-/* expand the indexed frames of a pack into rgb565, one frame after another.
-   index 0, and an index past the palette, become the key colour. an opaque
-   colour that equals the key moves one blue step so it still draws. */
-static uint16_t *sprite_expand(const struct sprite_job *job, size_t *bytes_out)
+/* the pack's palette as rgb565. index 0, and an index past the palette,
+   become the key colour. an opaque colour that equals the key moves one
+   blue step so it still draws. */
+static void sprite_palette(const struct sprite_job *job, uint16_t *palette)
 {
-    size_t pixels_per_frame = (size_t)job->width * job->height;
-    size_t count = pixels_per_frame * job->frame_count;
-    size_t bytes = (count * 2u + 4095u) & ~(size_t)4095u;
-    uint16_t *output;
-    unsigned frame;
-    size_t offset;
-    output = mmap(0, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
-                  -1, 0);
-    if (output == MAP_FAILED)
-        return 0;
-    for (frame = 0; frame < job->frame_count; frame++) {
-        const uint8_t *source = job->pixels + (size_t)frame * job->pixel_bytes;
-        uint16_t *target = output + (size_t)frame * pixels_per_frame;
-        for (offset = 0; offset < pixels_per_frame; offset++) {
-            unsigned colour_index = source[offset];
-            uint16_t colour = DS_GR_KEY_RGB565;
-            if (colour_index && colour_index < job->palette_count) {
-                memcpy(&colour, job->palette + colour_index * 2u, sizeof(colour));
-                if (colour == DS_GR_KEY_RGB565)
-                    colour = DS_GR_KEY_RGB565 - 1u;
-            }
-            target[offset] = colour;
+    unsigned index;
+    for (index = 0; index < 256u; index++) {
+        uint16_t colour = DS_GR_KEY_RGB565;
+        if (index && index < job->palette_count) {
+            memcpy(&colour, job->palette + index * 2u, sizeof(colour));
+            if (colour == DS_GR_KEY_RGB565)
+                colour = DS_GR_KEY_RGB565 - 1u;
         }
+        palette[index] = colour;
     }
-    *bytes_out = bytes;
-    return output;
 }
 
 static void sprite_drop_frames(struct sprite_deck *state)
 {
-    if (state->frames)
-        munmap(state->frames, state->frames_bytes);
-    state->frames = 0;
-    state->frames_bytes = 0;
+    if (state->block)
+        munmap(state->block, state->block_bytes);
+    state->block = 0;
+    state->block_bytes = 0;
+    state->pixels = 0;
 }
 
 /* runs on rbp's ui thread, the only thread that reads the frames. */
@@ -531,20 +537,13 @@ static void sprite_take_jobs(void)
     for (deck = 0; deck < 2u; deck++) {
         struct sprite_job *job = sprite_jobs[deck];
         struct sprite_deck *state;
-        uint16_t *frames;
-        size_t frames_bytes = 0;
         if (!job)
             continue;
         if (!__sync_bool_compare_and_swap(&sprite_jobs[deck], job, 0))
             continue;
         state = &sprite_decks[deck];
-        frames = job->generation == state->generation
-                     ? sprite_expand(job, &frames_bytes)
-                     : 0;
-        munmap(job->block, job->block_bytes);
-        if (!frames) {
-            if (job->generation == state->generation)
-                sprite_log_once(32u, "sprites disabled: frame expansion failed");
+        if (job->generation != state->generation) {
+            munmap(job->block, job->block_bytes);
             munmap(job, 4096u);
             continue;
         }
@@ -559,8 +558,11 @@ static void sprite_take_jobs(void)
         state->frames_per_beat = job->frames_per_beat;
         state->beats_per_loop = job->beats_per_loop;
         state->anchor = job->anchor;
-        state->frames = frames;
-        state->frames_bytes = frames_bytes;
+        state->block = job->block;
+        state->block_bytes = job->block_bytes;
+        state->pixels = job->pixels;
+        state->pixel_bytes = job->pixel_bytes;
+        sprite_palette(job, state->palette);
         state->epoch_ms = now_ms();
         state->have_phase = 0;
         state->phase_milli = 0;
@@ -610,16 +612,32 @@ static int sprite_frame_now(const struct sprite_deck *state, unsigned *frame)
     return -1;
 }
 
-/* centred on the deck's strip, or resting on its bottom edge for anchor 2. */
-static void sprite_place(unsigned deck, const struct sprite_deck *state,
-                         int *x, int *y)
+/* the sprite's on-screen size at a pulse, scaled from its height to
+   SPRITE_BASE_HEIGHT and kept inside the waveform view. */
+static void sprite_size(const struct sprite_deck *state, unsigned pulse_milli,
+                        unsigned *width, unsigned *height)
 {
-    int strip_top = WAVE_TOP + (int)deck * WAVE_STRIP;
-    *x = WAVE_LEFT + (WAVE_WIDTH - (int)state->width) / 2;
+    unsigned tall = SPRITE_BASE_HEIGHT * (1000u + pulse_milli) / 1000u;
+    unsigned wide = state->width * tall / state->height;
+    if (wide > WAVE_WIDTH) {
+        tall = tall * WAVE_WIDTH / wide;
+        wide = WAVE_WIDTH;
+    }
+    *width = wide ? wide : 1u;
+    *height = tall ? tall : 1u;
+}
+
+/* the window holds the largest pulse, centred on the whole waveform view,
+   or resting on its bottom edge for anchor 2. */
+static void sprite_frame_box(const struct sprite_deck *state, int *x, int *y,
+                             unsigned *width, unsigned *height)
+{
+    sprite_size(state, sprite_pulse_on ? SPRITE_PULSE_MILLI : 0u, width, height);
+    *x = WAVE_LEFT + (WAVE_WIDTH - (int)*width) / 2;
     if (state->anchor == 2u)
-        *y = strip_top + WAVE_STRIP - (int)state->height;
+        *y = WAVE_TOP + 2 * WAVE_STRIP - (int)*height;
     else
-        *y = strip_top + (WAVE_STRIP - (int)state->height) / 2;
+        *y = WAVE_TOP + WAVE_STRIP - (int)*height / 2;
 }
 
 static void sprite_window_close(struct sprite_window *window)
@@ -628,57 +646,126 @@ static void sprite_window_close(struct sprite_window *window)
     window->shown = -1;
 }
 
-static void sprite_window_blit(struct sprite_window *window,
-                               const struct sprite_deck *state, unsigned frame)
+/* nearest-neighbour scale of one frame into the window, centred across and
+   centred or bottom-aligned down, keyed out everywhere else. */
+static void sprite_window_draw(struct sprite_window *window,
+                               const struct sprite_deck *state, unsigned frame,
+                               unsigned wide, unsigned tall)
 {
-    const uint16_t *source =
-        state->frames + (size_t)frame * state->width * state->height;
+    const uint8_t *source = state->pixels + (size_t)frame * state->pixel_bytes;
+    unsigned left = (window->gr.width - wide) / 2u;
+    unsigned top = state->anchor == 2u ? window->gr.height - tall
+                                       : (window->gr.height - tall) / 2u;
+    uint32_t step_x = (state->width << 16) / wide;
+    uint32_t step_y = (state->height << 16) / tall;
     int pitch;
     uint8_t *pixels = rx3_gr_lock(&window->gr, &pitch);
     unsigned row;
     if (!pixels)
         return;
-    for (row = 0; row < state->height; row++)
-        memcpy(pixels + (size_t)row * (unsigned)pitch,
-               source + (size_t)row * state->width, state->width * 2u);
+    for (row = 0; row < window->gr.height; row++) {
+        uint16_t *line = (uint16_t *)(pixels + (size_t)row * (unsigned)pitch);
+        unsigned column;
+        if (row < top || row >= top + tall) {
+            for (column = 0; column < window->gr.width; column++)
+                line[column] = DS_GR_KEY_RGB565;
+            continue;
+        }
+        {
+            const uint8_t *source_row =
+                source + (size_t)(((row - top) * step_y) >> 16) * state->width;
+            uint32_t along = 0;
+            for (column = 0; column < left; column++)
+                line[column] = DS_GR_KEY_RGB565;
+            for (column = 0; column < wide; column++) {
+                line[left + column] = state->palette[source_row[along >> 16]];
+                along += step_x;
+            }
+            for (column = left + wide; column < window->gr.width; column++)
+                line[column] = DS_GR_KEY_RGB565;
+        }
+    }
     rx3_gr_present(&window->gr);
-    window->shown = (int)frame;
 }
 
-/* keeps each deck's window in step with the waveform screen: open while the
-   screen is up and the deck has a sprite and a waveform, closed otherwise. */
-static void sprite_update_deck(unsigned deck, int screen_up, unsigned now)
+static int sprite_deck_showable(unsigned deck)
 {
-    struct sprite_deck *state = &sprite_decks[deck];
-    struct sprite_window *window = &sprite_windows[deck];
+    const struct sprite_deck *state = &sprite_decks[deck];
+    return state->live && state->pixels && rx3_wave_deck_loaded(deck);
+}
+
+/* the deck the one sprite follows: a playing deck over a stopped one, and
+   the current lead while it still qualifies, so it does not flicker. */
+static int sprite_pick_lead(void)
+{
+    unsigned deck;
+    int best = -1;
+    for (deck = 0; deck < 2u; deck++) {
+        struct sprite_deck *state = &sprite_decks[deck];
+        long position = state->position;
+        state->playing = position != state->seen_position;
+        state->seen_position = position;
+    }
+    for (deck = 0; deck < 2u; deck++) {
+        unsigned candidate = deck ? sprite_lead ^ 1u : sprite_lead;
+        if (!sprite_deck_showable(candidate))
+            continue;
+        if (best < 0 || (sprite_decks[candidate].playing &&
+                         !sprite_decks[best].playing))
+            best = (int)candidate;
+    }
+    return best;
+}
+
+/* keeps the window in step with the waveform screen: open while the screen
+   is up and some deck has a sprite and a waveform, closed otherwise. */
+static void sprite_update(int screen_up, unsigned now)
+{
+    struct sprite_window *window = &sprite_window;
+    const struct sprite_deck *state;
     unsigned frame = 0;
+    unsigned wide;
+    unsigned tall;
+    unsigned box_wide;
+    unsigned box_tall;
+    int lead = screen_up ? sprite_pick_lead() : -1;
     int x;
     int y;
-    if (!screen_up || !state->live || !state->frames ||
-        !rx3_wave_deck_loaded(deck) || sprite_frame_now(state, &frame)) {
+    if (lead < 0 || sprite_frame_now(&sprite_decks[lead], &frame)) {
         sprite_window_close(window);
         return;
     }
-    sprite_place(deck, state, &x, &y);
+    sprite_lead = (unsigned)lead;
+    state = &sprite_decks[lead];
+    sprite_frame_box(state, &x, &y, &box_wide, &box_tall);
     if (window->gr.handle &&
         (window->gr.x != x || window->gr.y != y ||
-         window->gr.width != state->width || window->gr.height != state->height))
+         window->gr.width != box_wide || window->gr.height != box_tall))
         sprite_window_close(window);
     if (!window->gr.handle) {
         if (window->failed_ms && now - window->failed_ms < SPRITE_RETRY_MS)
             return;
-        if (rx3_gr_open(&window->gr, x, y, state->width, state->height)) {
+        if (rx3_gr_open(&window->gr, x, y, box_wide, box_tall)) {
             window->failed_ms = now ? now : 1u;
             sprite_note(256u, "sprite window could not be created");
             return;
         }
         window->failed_ms = 0;
         window->shown = -1;
-        sprite_note(deck ? 8u : 4u,
-                    deck ? "sprite window open deck 1" : "sprite window open deck 0");
+        sprite_note(4u, "sprite window open");
     }
-    if (window->shown != (int)frame)
-        sprite_window_blit(window, state, frame);
+    sprite_size(state, sprite_pulse_on ? sprite_pulse_milli : 0u, &wide, &tall);
+    if (wide > box_wide)
+        wide = box_wide;
+    if (tall > box_tall)
+        tall = box_tall;
+    if (window->shown == (int)frame && window->shown_deck == sprite_lead &&
+        window->shown_height == tall)
+        return;
+    sprite_window_draw(window, state, frame, wide, tall);
+    window->shown = (int)frame;
+    window->shown_deck = sprite_lead;
+    window->shown_height = tall;
 }
 
 /* driven from rbp's image draws, which run on its ui thread. */
@@ -698,8 +785,7 @@ static void sprites_feature_after_image(void *render, void *image,
         return;
     sprite_tick_ms = now;
     screen_up = rx3_wave_screen_up();
-    sprite_update_deck(0u, screen_up, now);
-    sprite_update_deck(1u, screen_up, now);
+    sprite_update(screen_up, now);
 }
 
 static void sprites_feature_playhead(unsigned int deck, long position)
@@ -707,6 +793,7 @@ static void sprites_feature_playhead(unsigned int deck, long position)
     uint32_t phase = 0;
     if (deck >= 2u)
         return;
+    sprite_decks[deck].position = position;
     if (sprite_read_beat_phase(deck, position, &phase)) {
         sprite_decks[deck].have_phase = 0;
         return;
