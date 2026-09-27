@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: MPL-2.0
  * the beat fx broker, firmware 1.19.
  *
- * features that take over a stock beat fx all need the same three places in
+ * features that take over a stock beat fx all need the same four places in
  * rbp, and a function can carry only one hook, so the core owns them and asks
  * each active feature in turn:
  *   operateBeatEffect(manager, buffer, frames, preview), audio thread: runs
  *     the selected beat fx on the selected channel's block, in place.
  *   MasterInnards::onEv_BeatFxBeat(this, delta), ui thread: the BEAT arrows.
+ *   MasterInnards::onEv_BeatFxTime(this, delta), ui thread: the TIME knob,
+ *     in encoder steps before rbp's acceleration.
  *   SetBeatFxInfo(), ui thread: fills the beat fx block of the play screen
  *     (buf_PlayGroup +0x1e0) that the ui copies and draws.
  * each hook is installed only when an active feature listens to it.
@@ -17,6 +19,7 @@
 
 #define OPERATE_BEAT_EFFECT ((unsigned long)0x0008a52c)
 #define BEAT_FX_BEAT_EVENT ((unsigned long)0x0034553c)
+#define BEAT_FX_TIME_EVENT ((unsigned long)0x00346a8c)
 #define SET_BEAT_FX_INFO ((unsigned long)0x001309d4)
 #define BEAT_FX_INFO_BLOCK ((uint8_t *)0x0216b5a0)
 
@@ -32,6 +35,10 @@ static const uint8_t operate_beat_effect_guard[8] = {
 static const uint8_t beat_fx_beat_event_guard[8] = {
     0xe9, 0x30, 0xd0, 0xe5, 0xf0, 0x41, 0x2d, 0xe9
 };
+/* ldrb r3,[r0,#0xe9] ; stmdb sp!,{r4-r8,lr}, like the BEAT arrows */
+static const uint8_t beat_fx_time_event_guard[8] = {
+    0xe9, 0x30, 0xd0, 0xe5, 0xf0, 0x41, 0x2d, 0xe9
+};
 /* stmdb sp!,{r3-r8,r10,lr} ; mov r0,#0 */
 static const uint8_t set_beat_fx_info_guard[8] = {
     0xf8, 0x45, 0x2d, 0xe9, 0x00, 0x00, 0xa0, 0xe3
@@ -39,9 +46,11 @@ static const uint8_t set_beat_fx_info_guard[8] = {
 
 static struct installed_hook operate_beat_effect_hook;
 static struct installed_hook beat_fx_beat_event_hook;
+static struct installed_hook beat_fx_time_event_hook;
 static struct installed_hook set_beat_fx_info_hook;
 static operate_beat_effect_fn original_operate_beat_effect;
 static beat_fx_beat_event_fn original_beat_fx_beat_event;
+static beat_fx_beat_event_fn original_beat_fx_time_event;
 static set_beat_fx_info_fn original_set_beat_fx_info;
 
 static void hooked_operate_beat_effect(void *manager, Float2 *buffer,
@@ -67,6 +76,17 @@ static int hooked_beat_fx_beat_event(void *innards, long delta)
             runtime_features[index].beat_fx_beat(innards, delta))
             return 0;
     return original_beat_fx_beat_event(innards, delta);
+}
+
+static int hooked_beat_fx_time_event(void *innards, long delta)
+{
+    unsigned int index;
+    for (index = 0; index < RUNTIME_FEATURE_COUNT; index++)
+        if (runtime_features[index].active &&
+            runtime_features[index].beat_fx_time &&
+            runtime_features[index].beat_fx_time(innards, delta))
+            return 0;
+    return original_beat_fx_time_event(innards, delta);
 }
 
 static void hooked_set_beat_fx_info(void)
@@ -125,6 +145,15 @@ static void install_beat_fx_broker(void)
         if (!original_beat_fx_beat_event)
             log_line("warning: onEv_BeatFxBeat guard rejected");
     }
+    if (!original_beat_fx_time_event &&
+        beat_fx_broker_wanted(__builtin_offsetof(struct rx3_runtime_feature,
+                                                 beat_fx_time))) {
+        original_beat_fx_time_event = (beat_fx_beat_event_fn)install_hook(
+            &beat_fx_time_event_hook, BEAT_FX_TIME_EVENT,
+            beat_fx_time_event_guard, (void *)hooked_beat_fx_time_event);
+        if (!original_beat_fx_time_event)
+            log_line("warning: onEv_BeatFxTime guard rejected");
+    }
     if (!original_set_beat_fx_info &&
         beat_fx_broker_wanted(__builtin_offsetof(struct rx3_runtime_feature,
                                                  beat_fx_info))) {
@@ -139,9 +168,11 @@ static void install_beat_fx_broker(void)
 static void remove_beat_fx_broker(void)
 {
     uninstall_hook(&set_beat_fx_info_hook);
+    uninstall_hook(&beat_fx_time_event_hook);
     uninstall_hook(&beat_fx_beat_event_hook);
     uninstall_hook(&operate_beat_effect_hook);
     original_set_beat_fx_info = 0;
+    original_beat_fx_time_event = 0;
     original_beat_fx_beat_event = 0;
     original_operate_beat_effect = 0;
 }

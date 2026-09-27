@@ -49,6 +49,8 @@ struct rx3_runtime_feature {
     int (*beat_fx_operate)(void *manager, Float2 *buffer, int frames);
     /* ui thread, the BEAT arrows. nonzero means the feature took them. */
     int (*beat_fx_beat)(void *innards, long delta);
+    /* ui thread, the TIME knob in encoder steps. nonzero means taken. */
+    int (*beat_fx_time)(void *innards, long delta);
     /* ui thread, after rbp filled the play screen's beat fx block. */
     void (*beat_fx_info)(uint8_t *block);
     /* ui thread, the image to draw instead of image_id, or image_id. */
