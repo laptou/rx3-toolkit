@@ -5,7 +5,7 @@
  * a beat number) hands over a coverage mask of its own lettering. the copy
  * takes the stock image's size, ground (its corner pixel) and ink (the pixel
  * farthest from the ground), so it drops into the stock layout in either
- * colour bank. each copy gets its own id in the private table, made once and
+ * colour bank. stock images are rgb565 or argb1555, one 16-bit plane. each copy gets its own id in the private table, made once and
  * never rewritten, because rbp caches a surface per id. ui thread only.
  */
 
@@ -23,6 +23,7 @@ struct rx3_label_mask {
 #define RELABEL_SLOTS (RELABEL_LAST_ID - RELABEL_FIRST_ID + 1u)
 #define RELABEL_RECORD_BYTES 44u
 #define RELABEL_FORMAT_RGB565 1u
+#define RELABEL_FORMAT_ARGB1555 2u
 #define RELABEL_KEY_RGB565 0xf81fu
 
 struct relabel_entry {
@@ -34,27 +35,74 @@ struct relabel_entry {
 static struct relabel_entry relabel_entries[RELABEL_SLOTS];
 static unsigned relabel_count;
 
-static unsigned relabel_distance(uint16_t a, uint16_t b)
+/* a pixel in either stock format, green widened to 6 bits. */
+struct relabel_colour {
+    unsigned alpha;
+    unsigned red;
+    unsigned green;
+    unsigned blue;
+};
+
+static struct relabel_colour relabel_split(uint16_t pixel, unsigned format)
 {
-    int red = (int)(a >> 11) - (int)(b >> 11);
-    int green = (int)((a >> 5) & 0x3fu) - (int)((b >> 5) & 0x3fu);
-    int blue = (int)(a & 0x1fu) - (int)(b & 0x1fu);
+    struct relabel_colour colour;
+    if (format == RELABEL_FORMAT_ARGB1555) {
+        colour.alpha = pixel >> 15;
+        colour.red = (pixel >> 10) & 0x1fu;
+        colour.green = ((pixel >> 5) & 0x1fu) << 1;
+    } else {
+        colour.alpha = pixel != RELABEL_KEY_RGB565;
+        colour.red = pixel >> 11;
+        colour.green = (pixel >> 5) & 0x3fu;
+    }
+    colour.blue = pixel & 0x1fu;
+    return colour;
+}
+
+static uint16_t relabel_join(struct relabel_colour colour, unsigned format)
+{
+    if (format == RELABEL_FORMAT_ARGB1555)
+        return (uint16_t)((colour.alpha << 15) | (colour.red << 10) |
+                          ((colour.green >> 1) << 5) | colour.blue);
+    return (uint16_t)((colour.red << 11) | (colour.green << 5) | colour.blue);
+}
+
+static unsigned relabel_distance(uint16_t a, uint16_t b, unsigned format)
+{
+    struct relabel_colour one = relabel_split(a, format);
+    struct relabel_colour two = relabel_split(b, format);
+    int red = (int)one.red - (int)two.red;
+    int green = (int)one.green - (int)two.green;
+    int blue = (int)one.blue - (int)two.blue;
+    /* against a see-through pixel, the brightest solid one is farthest. */
+    if (one.alpha != two.alpha) {
+        struct relabel_colour solid = one.alpha ? one : two;
+        return 0x10000u + 4u * solid.red * solid.red +
+               solid.green * solid.green + 4u * solid.blue * solid.blue;
+    }
     return (unsigned)(4 * red * red + green * green + 4 * blue * blue);
 }
 
-static uint16_t relabel_mix(uint16_t ground, uint16_t ink, unsigned level)
+/* a see-through ground or ink has no colour to blend toward, so the
+   lettering is cut hard; two solid colours blend by coverage. */
+static uint16_t relabel_mix(uint16_t ground, uint16_t ink, unsigned level,
+                            unsigned format)
 {
-    unsigned red = ((ground >> 11) * (15u - level) + (ink >> 11) * level) / 15u;
-    unsigned green = (((ground >> 5) & 0x3fu) * (15u - level) +
-                      ((ink >> 5) & 0x3fu) * level) / 15u;
-    unsigned blue = ((ground & 0x1fu) * (15u - level) +
-                     (ink & 0x1fu) * level) / 15u;
-    return (uint16_t)((red << 11) | (green << 5) | blue);
+    struct relabel_colour low = relabel_split(ground, format);
+    struct relabel_colour high = relabel_split(ink, format);
+    struct relabel_colour out;
+    if (!low.alpha || !high.alpha)
+        return level >= 8u ? ink : ground;
+    out.alpha = 1u;
+    out.red = (low.red * (15u - level) + high.red * level) / 15u;
+    out.green = (low.green * (15u - level) + high.green * level) / 15u;
+    out.blue = (low.blue * (15u - level) + high.blue * level) / 15u;
+    return relabel_join(out, format);
 }
 
 /* the mask, box-averaged down when it is larger than the target, centred. */
 static void relabel_paint(uint16_t *pixels, unsigned width, unsigned height,
-                          uint16_t ground, uint16_t ink,
+                          uint16_t ground, uint16_t ink, unsigned format,
                           const struct rx3_label_mask *mask)
 {
     unsigned step = 0x10000u;
@@ -95,11 +143,8 @@ static void relabel_paint(uint16_t *pixels, unsigned width, unsigned height,
                     count++;
                 }
             level = count ? (sum + count / 2u) / count : 0u;
-            /* a keyed ground has no colour to blend toward. */
-            if (ground == RELABEL_KEY_RGB565)
-                level = level >= 8u ? 15u : 0u;
             pixels[(top + y) * width + left + x] =
-                relabel_mix(ground, ink, level);
+                relabel_mix(ground, ink, level, format);
         }
     }
 }
@@ -117,6 +162,7 @@ static uint32_t relabel_build(uint32_t stock, const struct rx3_label_mask *mask)
     uint16_t ink;
     uint32_t offset;
     uint32_t no_palette = 0u;
+    unsigned format;
     unsigned best = 0;
     unsigned index;
     unsigned count;
@@ -127,7 +173,9 @@ static uint32_t relabel_build(uint32_t stock, const struct rx3_label_mask *mask)
     memcpy(&width, source + 4u, sizeof(width));
     memcpy(&height, source + 6u, sizeof(height));
     memcpy(&offset, source + 0x20u, sizeof(offset));
-    if (source[0x18u] != RELABEL_FORMAT_RGB565 || source[0x19u] || !width ||
+    format = source[0x18u];
+    if ((format != RELABEL_FORMAT_RGB565 &&
+         format != RELABEL_FORMAT_ARGB1555) || source[0x19u] || !width ||
         !height) {
         log_number("relabel: unsupported stock image ", stock);
         log_number("relabel:   format ", source[0x18u]);
@@ -143,7 +191,8 @@ static uint32_t relabel_build(uint32_t stock, const struct rx3_label_mask *mask)
     ground = stock_pixels[0];
     ink = ground ^ 0xffffu;
     for (index = 0; index < count; index++) {
-        unsigned distance = relabel_distance(stock_pixels[index], ground);
+        unsigned distance = relabel_distance(stock_pixels[index], ground,
+                                             format);
         if (distance > best) {
             best = distance;
             ink = stock_pixels[index];
@@ -151,7 +200,7 @@ static uint32_t relabel_build(uint32_t stock, const struct rx3_label_mask *mask)
     }
     for (index = 0; index < count; index++)
         pixels[index] = ground;
-    relabel_paint(pixels, width, height, ground, ink, mask);
+    relabel_paint(pixels, width, height, ground, ink, format, mask);
 
     record = table + id * RELABEL_RECORD_BYTES;
     memcpy(record, source, RELABEL_RECORD_BYTES);
