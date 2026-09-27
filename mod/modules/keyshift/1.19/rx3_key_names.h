@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0
- * musical keys the sidebar already draws.
+ * musical keys as rbp spells them.
  * alphabet, camelot, and open key. a pitch shift keeps the notation
  * and the major or minor mode.
  */
@@ -189,8 +189,8 @@ static int rx3_key_spell(const struct rx3_key_name *key, char *out, int cap)
     return 2;
 }
 
-/* "Am Bm" when the heard pitch differs. a multiple of 12 writes the base alone.
-   -1 when `base` is not a key the sidebar draws. */
+/* "Bm (Am)", the heard key then the analysed one, when the pitch differs.
+   a multiple of 12 writes the base alone. -1 when `base` is not a key. */
 static int rx3_key_pair(const char *base, int semitones, char *out, int cap)
 {
     struct rx3_key_name key;
@@ -200,6 +200,7 @@ static int rx3_key_pair(const char *base, int semitones, char *out, int cap)
     int heard_len;
     int steps;
     int index;
+    int at;
     if (rx3_key_parse(base, &key))
         return -1;
     base_len = rx3_key_length(base);
@@ -217,15 +218,18 @@ static int rx3_key_pair(const char *base, int semitones, char *out, int cap)
     shifted = key;
     shifted.pitch = (key.pitch + steps) % 12;
     heard_len = rx3_key_spell(&shifted, heard, (int)sizeof(heard));
-    if (heard_len < 0 || base_len + 1 + heard_len + 1 > cap)
+    if (heard_len < 0 || heard_len + 2 + base_len + 1 + 1 > cap)
         return -1;
-    for (index = 0; index < base_len; index++)
-        out[index] = base[index];
-    out[base_len] = ' ';
+    at = 0;
     for (index = 0; index < heard_len; index++)
-        out[base_len + 1 + index] = heard[index];
-    out[base_len + 1 + heard_len] = 0;
-    return base_len + 1 + heard_len;
+        out[at++] = heard[index];
+    out[at++] = ' ';
+    out[at++] = '(';
+    for (index = 0; index < base_len; index++)
+        out[at++] = base[index];
+    out[at++] = ')';
+    out[at] = 0;
+    return at;
 }
 
 #endif /* RX3_KEY_NAMES_H */

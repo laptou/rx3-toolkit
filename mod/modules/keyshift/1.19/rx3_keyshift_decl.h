@@ -27,6 +27,11 @@
    with key lock engaged instead of sounding wrong. Same contract, same base. */
 #define TIMESTRETCH_FGPR_OPERATE ((unsigned long)0x000a73bc)
 
+/* ui_Deck_Update(deck) draws each deck's play-screen track info. */
+#define DECK_UPDATE ((unsigned long)0x0028fa1c)
+#define PLAY_KEY_DATA ((unsigned long)0x03268bf0)
+#define PLAY_KEY_STRIDE 0x238u
+
 #define PITCH_CTOR       ((unsigned long)0x0008b700)
 #define PITCH_DTOR       ((unsigned long)0x0008b420)
 #define PITCH_INITIALIZE ((unsigned long)0x0008b2b8)
@@ -88,6 +93,12 @@ typedef void (*pitch_initialize_fn)(void *);
 typedef void (*pitch_adjust_fn)(void *, int, float);
 typedef void (*pitch_execute_fn)(void *, const Float2 *, Float2 *, int);
 
+typedef void (*deck_update_fn)(int);
+
+/* stmdb sp!,{r4-r11,lr} ; mov r3,#0xdc */
+static const uint8_t deck_update_guard[8] = {
+    0xf0, 0x4f, 0x2d, 0xe9, 0xdc, 0x30, 0xa0, 0xe3
+};
 static const uint8_t timestretch_stream_guard[8] = {
     0xf8, 0x40, 0x2d, 0xe9, 0x00, 0x40, 0xa0, 0xe1
 };
@@ -106,7 +117,8 @@ static void rx3_keyshift_report(void);
 static void rx3_keyshift_start_audio(unsigned int sample_rate);
 static int rx3_keyshift_semitones(unsigned int deck);
 static const uint16_t *rx3_keyshift_label(unsigned int deck);
-static void rx3_keyshift_annotate_sidebar(void *text);
+static void rx3_keyshift_install_key_display(void);
+static void rx3_keyshift_remove_key_display(void);
 static void rx3_keyshift_change(unsigned int deck, int delta);
 static void rx3_keyshift_reload(unsigned int deck);
 static void rx3_keyshift_destroy_deck(unsigned int deck);

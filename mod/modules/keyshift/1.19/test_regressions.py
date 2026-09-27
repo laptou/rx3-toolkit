@@ -44,10 +44,14 @@ require(
     "key shift must implement only its own lifecycle and panel contracts",
 )
 require(
-    "rx3_keyshift_annotate_sidebar" in KEYSHIFT
-    and "rx3_keyshift_annotate_sidebar(text)" in HOOK
-    and "rx3_key_pair" in (ROOT / "rx3_key_names.h").read_text(),
-    "the sidebar key must show the analysed key and the heard key",
+    "rx3_keyshift_annotate_sidebar" not in KEYSHIFT
+    and "rx3_keyshift_annotate_sidebar" not in HOOK
+    and "#define DECK_UPDATE ((unsigned long)0x0028fa1c)" in DECL
+    and "#define PLAY_KEY_DATA ((unsigned long)0x03268bf0)" in DECL
+    and "rx3_keyshift_install_key_display();" in FEATURE
+    and "rx3_key_pair(base, keyshift_decks[deck].semitones" in KEYSHIFT,
+    "the play-screen key must be rewritten per deck in ui_Deck_Update, not "
+    "guessed from where a label sits on screen",
 )
 
 # -- where the pitch stage sits ------------------------------------------------

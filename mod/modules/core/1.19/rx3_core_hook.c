@@ -1505,8 +1505,6 @@ static void hooked_draw_text(void *render, void *text)
     if (!RX3_DIAGNOSTIC_ONLY && overlay_panel &&
         is_performance_pad_subtree(window_layer))
         return;
-    if (!RX3_DIAGNOSTIC_ONLY)
-        rx3_keyshift_annotate_sidebar(text);
     original_draw_text(render, text);
     if (RX3_DIAGNOSTIC_ONLY)
         return;

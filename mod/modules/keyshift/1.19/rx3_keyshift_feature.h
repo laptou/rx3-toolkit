@@ -18,11 +18,13 @@ static int keyshift_feature_install(void)
     if (!original_audio_start)
         return 0;
     rx3_keyshift_install();
+    rx3_keyshift_install_key_display();
     return rx3_keyshift_ready();
 }
 
 static void keyshift_feature_remove(void)
 {
+    rx3_keyshift_remove_key_display();
     rx3_keyshift_remove();
     uninstall_hook(&audio_start_hook);
     original_audio_start = 0;

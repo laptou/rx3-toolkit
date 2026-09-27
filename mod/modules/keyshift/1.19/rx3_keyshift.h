@@ -399,114 +399,83 @@ static void rx3_keyshift_destroy_deck(unsigned int deck)
         destroy_pitch(&keyshift_decks[deck]);
 }
 
-/* the stock key badge is a short label. deck 1 sits in the upper or left
-   summary; deck 2 is below the midline, or on the right when both stay up. */
-static unsigned rx3_key_deck_for_box(int x1, int y1, int x2, int y2)
-{
-    int mid_x = (x1 + x2) / 2;
-    int mid_y = (y1 + y2) / 2;
-    if (mid_y >= 360)
-        return 1u;
-    if (mid_x >= 640)
-        return 1u;
-    return 0u;
-}
+/* each deck's play-screen KEY text lives in ui_PlayKeyData, one 0x238-byte
+   slot per deck: +8 non-zero when there is a key, +0x22 the utf-16 text.
+   ui_Deck_Update(deck) draws it and redraws whenever the text changes, so
+   the heard key is written into the slot just before that runs. the slot can
+   still hold our own text from the last pass, so the stock text is kept
+   aside and told apart by comparing against what was written. */
+static uint16_t key_play_stock[2][16];
+static uint16_t key_play_shown[2][24];
+static struct installed_hook deck_update_hook;
+static deck_update_fn original_deck_update;
 
-static int rx3_read_key_ascii(const uint16_t *chars, unsigned length,
-                             char *out, int cap)
+static int key_wide_equal(const uint16_t *left, const uint16_t *right)
 {
     unsigned index;
-    if (!chars || !length || (int)length >= cap)
-        return -1;
-    for (index = 0; index < length; index++) {
-        if (chars[index] < 33u || chars[index] > 126u)
-            return -1;
-        out[index] = (char)chars[index];
-    }
-    out[length] = 0;
-    return (int)length;
+    for (index = 0; left[index] == right[index]; index++)
+        if (!left[index])
+            return 1;
+    return 0;
 }
 
-static uint16_t key_sidebar_text[2][16];
-static const uint16_t *key_sidebar_stock[2];
-static uint8_t key_sidebar_stock_len[2];
-static int key_sidebar_logged;
-
-static void rx3_keyshift_annotate_sidebar(void *text)
+static void rx3_keyshift_show_key(unsigned deck)
 {
-    uint16_t window_layer;
-    uint16_t x1, y1, x2, y2;
-    uint32_t pointer;
-    uint8_t length;
-    const uint16_t *chars;
-    unsigned deck;
-    char base[8];
-    char pair[16];
-    int pair_len;
-    int steps;
+    uint8_t *slot = (uint8_t *)PLAY_KEY_DATA + deck * PLAY_KEY_STRIDE;
+    uint16_t *text = (uint16_t *)(slot + 0x22u);
+    char base[16];
+    char pair[24];
+    int length;
     int index;
-    int height;
-    int width;
-    if (!keyshift_enabled || !text)
+    if (!*(const uint16_t *)(slot + 8u))
         return;
-    memcpy(&window_layer, (uint8_t *)text + 0x10u, sizeof(window_layer));
-    if ((window_layer >> 8) == 0x01u)
-        return;
-    memcpy(&x1, (uint8_t *)text + 0x18u, sizeof(x1));
-    memcpy(&y1, (uint8_t *)text + 0x1au, sizeof(y1));
-    memcpy(&x2, (uint8_t *)text + 0x1cu, sizeof(x2));
-    memcpy(&y2, (uint8_t *)text + 0x1eu, sizeof(y2));
-    height = (int)y2 - (int)y1;
-    width = (int)x2 - (int)x1;
-    if (height < 8 || height > 64 || width < 8 || width > 400)
-        return;
-    memcpy(&pointer, (uint8_t *)text + 0x34u, sizeof(pointer));
-    length = ((uint8_t *)text)[0x38u];
-    if (!pointer)
-        return;
-    deck = rx3_key_deck_for_box((int)x1, (int)y1, (int)x2, (int)y2);
-    chars = (const uint16_t *)(unsigned long)pointer;
-    if (chars == key_sidebar_text[deck]) {
-        chars = key_sidebar_stock[deck];
-        length = key_sidebar_stock_len[deck];
-        if (!chars)
+    if (!key_wide_equal(text, key_play_shown[deck])) {
+        for (index = 0; index < 15 && text[index]; index++)
+            key_play_stock[deck][index] = text[index];
+        if (text[index]) {
+            key_play_stock[deck][0] = 0;
+            key_play_shown[deck][0] = 0;
             return;
-    }
-    if (rx3_read_key_ascii(chars, length, base, (int)sizeof(base)) < 0)
-        return;
-    steps = keyshift_decks[deck].semitones % 12;
-    if (steps < 0)
-        steps += 12;
-    pair_len = rx3_key_pair(base, keyshift_decks[deck].semitones, pair,
-                            (int)sizeof(pair));
-    if (pair_len < 0)
-        return;
-    if (!steps) {
-        if ((const uint16_t *)(unsigned long)pointer == key_sidebar_text[deck] &&
-            key_sidebar_stock[deck]) {
-            set_u32(text, 0x34u, (uint32_t)(unsigned long)key_sidebar_stock[deck]);
-            ((uint8_t *)text)[0x38u] = key_sidebar_stock_len[deck];
         }
+        key_play_stock[deck][index] = 0;
+    }
+    for (index = 0; key_play_stock[deck][index]; index++) {
+        uint16_t unit = key_play_stock[deck][index];
+        if (unit < 33u || unit > 126u)
+            return;
+        base[index] = (char)unit;
+    }
+    base[index] = 0;
+    length = rx3_key_pair(base, keyshift_decks[deck].semitones, pair,
+                          (int)sizeof(pair));
+    if (length < 0)
         return;
-    }
-    key_sidebar_stock[deck] = chars;
-    key_sidebar_stock_len[deck] = length;
-    for (index = 0; index < pair_len; index++)
-        key_sidebar_text[deck][index] = (uint16_t)(unsigned char)pair[index];
-    key_sidebar_text[deck][pair_len] = 0;
-    set_u32(text, 0x34u, (uint32_t)(unsigned long)key_sidebar_text[deck]);
-    ((uint8_t *)text)[0x38u] = (uint8_t)pair_len;
-    {
-        int cell = height > 4 ? height * 2 / 3 : 8;
-        int need = pair_len * cell + 4;
-        if (need > width && (int)x1 + need < 1280)
-            set_u16(text, 0x1cu, (uint16_t)((int)x1 + need));
-    }
-    if (!key_sidebar_logged) {
-        key_sidebar_logged = 1;
-        log_number("sidebar key layer = ", window_layer);
-        log_number("sidebar key deck = ", deck + 1u);
-    }
+    for (index = 0; index < length; index++)
+        text[index] = (uint16_t)(unsigned char)pair[index];
+    text[length] = 0;
+    memcpy(key_play_shown[deck], text, (size_t)(length + 1) * 2u);
+}
+
+static void hooked_deck_update(int deck)
+{
+    if (deck == 0 || deck == 1)
+        rx3_keyshift_show_key((unsigned)deck);
+    original_deck_update(deck);
+}
+
+static void rx3_keyshift_install_key_display(void)
+{
+    original_deck_update = (deck_update_fn)install_hook(
+        &deck_update_hook, DECK_UPDATE, deck_update_guard,
+        (void *)hooked_deck_update);
+    if (!original_deck_update)
+        log_line("key shift: play-screen key hook unavailable");
+}
+
+static void rx3_keyshift_remove_key_display(void)
+{
+    uninstall_hook(&deck_update_hook);
+    original_deck_update = 0;
 }
 
 #endif /* RX3_KEYSHIFT_H */
