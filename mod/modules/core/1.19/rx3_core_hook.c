@@ -393,12 +393,21 @@ static int swang_feature_beat_fx_beat(void *innards, long delta);
 static int swang_feature_beat_fx_time(void *innards, long delta);
 static void swang_feature_beat_fx_info(uint8_t *block);
 static uint32_t swang_feature_image_swap(uint32_t image_id);
+static int charizard2_feature_configured(void);
+static int charizard2_feature_install(void);
+static void charizard2_feature_remove(void);
+static int charizard2_feature_beat_fx_operate(void *manager, Float2 *buffer,
+                                              int frames);
+static uint32_t charizard2_feature_image_swap(uint32_t image_id);
+static void charizard2_feature_after_image(void *render, void *image,
+                                           uint16_t window_layer,
+                                           uint32_t image_id);
 static void rx3_notify_playhead(unsigned int deck, long position);
 static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
 static uint32_t rx3_swap_image(uint32_t image_id);
 
-#define RUNTIME_FEATURE_COUNT 6u
+#define RUNTIME_FEATURE_COUNT 7u
 
 static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
@@ -461,6 +470,15 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         .beat_fx_time = swang_feature_beat_fx_time,
         .beat_fx_info = swang_feature_beat_fx_info,
         .image_swap = swang_feature_image_swap,
+    },
+    {
+        .name = "charizard2",
+        .configured = charizard2_feature_configured,
+        .install = charizard2_feature_install,
+        .remove = charizard2_feature_remove,
+        .beat_fx_operate = charizard2_feature_beat_fx_operate,
+        .image_swap = charizard2_feature_image_swap,
+        .after_image = charizard2_feature_after_image,
     },
     {
         .name = "bandpass",
@@ -2222,6 +2240,7 @@ static void remove_channel_tap(void)
 #include "../../sprites/1.19/rx3_sprites_feature.h"
 #include "../../sidechain/1.19/rx3_sidechain_feature.h"
 #include "../../swang/1.19/rx3_swang_feature.h"
+#include "../../charizard2/1.19/rx3_charizard2_feature.h"
 #include "../../bandpass/1.19/rx3_bandpass_feature.h"
 
 static int hooked_load(void *reader, const void *track_info)

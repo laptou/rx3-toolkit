@@ -8,7 +8,7 @@
   "runtime_directory": "sprites",
   "namespace": "sprites",
   "requires": ["core"],
-  "conflicts": [],
+  "conflicts": ["charizard2"],
   "files": [
     {
       "source": "module.sh",

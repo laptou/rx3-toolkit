@@ -16,5 +16,6 @@ Nothing in this procedure writes internal flash. Boot without the stick, or powe
 7. Stems and sprites together for a long playback, including USB browsing.
 8. A truncated pack, a missing `RX3_SPRITES` directory, an unsupported layout, and a forced player restart. Stock audio and the stock interface must continue. The rejected test must roll the player binary back.
 9. BEAT JUMP page 2: press a pad to select that catalog sprite on both decks, press the lit pad to turn the overlay off, confirm page 1 still beat-jumps, and confirm both decks show the chosen pack.
+10. CHARIZARD2: TRANS shows CHARIZARD. ON shows the sprite and OFF hides it. DEPTH changes the size. CH1 sits on the top strip, CH2 on the bottom strip, and Master sits in the middle. The audio stays dry.
 
 Keep logs, checksums, timings, and the screenshots you need. Do not commit keys, firmware, player binaries, image tables, separated audio, or artwork you do not own.
