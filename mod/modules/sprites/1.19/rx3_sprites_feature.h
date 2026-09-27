@@ -3,8 +3,9 @@
  * draws only through pal_draw_image, right after rbp draws a proven anchor
  * image. packs are 8-bit indexed; the player expands each frame to the same
  * rgb565 record the custom tabs use, because record format 2 is direct rgb565
- * and reads the index bytes as pixels. index 0 is black until a format with a
- * mask is proven. anything unproven leaves the stock image untouched.
+ * and reads the index bytes as pixels. index 0 becomes the key colour, and the
+ * draw model's colour key (rbp's "ban colour") skips those pixels.
+ * anything unproven leaves the stock image untouched.
  */
 
 #ifndef RX3_SPRITES_FEATURE_H
@@ -21,6 +22,10 @@
 #define SPRITE_TRACE_LIMIT 96u
 #define SPRITE_WAVE_MIN_W 200
 #define SPRITE_WAVE_MIN_H 40
+/* magenta. model +0x48 holds it as 0x00bbggrr, and the renderer compares it
+   against each rgb565 pixel. */
+#define SPRITE_KEY_RGB565 0xf81fu
+#define SPRITE_KEY_MODEL 0x00ff00ffu
 
 struct __attribute__((packed)) rx3_sprite_file_header {
     char magic[8];
@@ -606,7 +611,8 @@ done:
 }
 
 /* expand the indexed frames of a pack into rgb565, one frame after another.
-   an index past the palette is drawn as index 0. */
+   index 0, and an index past the palette, become the key colour. an opaque
+   colour that equals the key moves one blue step so it still draws. */
 static uint16_t *sprite_expand(const struct sprite_job *job, size_t *bytes_out)
 {
     size_t pixels_per_frame = (size_t)job->width * job->height;
@@ -624,9 +630,12 @@ static uint16_t *sprite_expand(const struct sprite_job *job, size_t *bytes_out)
         uint16_t *target = output + (size_t)frame * pixels_per_frame;
         for (offset = 0; offset < pixels_per_frame; offset++) {
             unsigned colour_index = source[offset];
-            uint16_t colour = 0u;
-            if (colour_index && colour_index < job->palette_count)
+            uint16_t colour = SPRITE_KEY_RGB565;
+            if (colour_index && colour_index < job->palette_count) {
                 memcpy(&colour, job->palette + colour_index * 2u, sizeof(colour));
+                if (colour == SPRITE_KEY_RGB565)
+                    colour = SPRITE_KEY_RGB565 - 1u;
+            }
             target[offset] = colour;
         }
     }
@@ -739,6 +748,8 @@ static void sprite_draw_model(void *render, void *image, unsigned image_id,
     box[3] = (uint16_t)y2;
     memcpy(model + 0x18u, box, sizeof(box));
     set_u32(model, 0x44u, image_id);
+    set_u32(model, 0x48u, SPRITE_KEY_MODEL);
+    model[0x4cu] |= 1u;
     sprite_overlay_draw = 1;
     original_draw_image(render, model);
     sprite_overlay_draw = 0;

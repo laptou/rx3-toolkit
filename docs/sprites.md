@@ -35,7 +35,7 @@ A source folder holds `manifest.json` plus either a PNG sequence or one sheet.
 | frames_per_beat, beats_per_loop | their product equals `frame_count` for `beat` |
 | anchor | `center` or `bottom-center` |
 
-Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. Packs store 8-bit indices. The player expands each frame to RGB565 when it loads the pack. Index 0 is drawn black, because no image format with a mask is proven yet.
+Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. Packs store 8-bit indices. The player expands each frame to RGB565 when it loads the pack. Index 0 becomes magenta `0xF81F`, and the draw asks rbp to skip that colour. An opaque pixel of exactly that colour is moved one step to `0xF81E`.
 
 Repeat a write from the command line. Diagnostics go to stderr. `-v` prints the summary, `-vv` also prints each PNG name, and `-q` keeps errors only.
 
