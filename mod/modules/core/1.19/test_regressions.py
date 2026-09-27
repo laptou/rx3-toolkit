@@ -69,6 +69,13 @@ require(
     "a restarted rbp must be told about media that is already mounted, and the "
     "drive must come back before the readiness verdict rather than after it",
 )
+require(
+    "$1 ~ /^\\/dev\\/sd/ && $2 ~ /^\\/media\\//" in AUTOEXEC
+    and 'for media_device in $media_devices; do' in AUTOEXEC
+    and "awk -v mount=\"$USB\"" not in AUTOEXEC,
+    "every mounted usb partition must be re-announced, not only the mod "
+    "drive, or a music drive in the other port stays invisible until replugged",
+)
 exit_paths = AUTOEXEC.split('launch_rbp "$RBP_OUTPUT"', 1)[1]
 require(
     "write_words stock" in exit_paths

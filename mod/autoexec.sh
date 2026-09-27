@@ -331,29 +331,29 @@ launch_rbp()
 }
 
 # rbp learns that a drive exists from the hotplug event the kernel emits when it
-# appears. That event fired for this drive while the previous process was
-# running, so the replacement comes up blind to media that is still mounted, and
-# the operator has to pull the drive out and push it back to be seen - which is
-# exactly the reinsertion the identity check used to refuse. Asking the kernel to
-# re-emit the event puts the drive in front of the new process again without
+# appears. Those events fired while the previous process was running, so the
+# replacement comes up blind to every drive that is still mounted - this one
+# and any music drive in the other port - and the operator has to pull each out
+# and push it back to be seen. Asking the kernel to re-emit the event for every
+# mounted usb partition puts them all in front of the new process again without
 # unmounting anything.
 announce_media()
 {
-    media_device=$(awk -v mount="$USB" '$2 == mount {print $1}' /proc/mounts | tail -1)
-    case "$media_device" in
-        /dev/*) ;;
-        *) say "media re-announce skipped: $USB is not a block device mount"; return 0 ;;
-    esac
-    media_uevent=/sys/class/block/${media_device#/dev/}/uevent
-    [ -w "$media_uevent" ] || {
-        say "media re-announce skipped: $media_uevent is not writable"
+    media_devices=$(awk '$1 ~ /^\/dev\/sd/ && $2 ~ /^\/media\// {print $1}' /proc/mounts | sort -u)
+    [ -n "$media_devices" ] || {
+        say "media re-announce skipped: no usb partition is mounted under /media"
         return 0
     }
-    if echo add > "$media_uevent" 2>/dev/null; then
-        say "re-announced $media_device to the hotplug handler"
-    else
-        say "WARNING: media re-announce failed for $media_device"
-    fi
+    for media_device in $media_devices; do
+        media_uevent=/sys/class/block/${media_device#/dev/}/uevent
+        if [ ! -w "$media_uevent" ]; then
+            say "media re-announce skipped: $media_uevent is not writable"
+        elif echo add > "$media_uevent" 2>/dev/null; then
+            say "re-announced $media_device to the hotplug handler"
+        else
+            say "WARNING: media re-announce failed for $media_device"
+        fi
+    done
 }
 
 append_diagnostics()
