@@ -25,6 +25,7 @@ sprites_prepare()
         if [ -n "$status_path" ]; then
             export RX3_SPRITE_STATUS_PATH="$status_path"
             export RX3_SPRITE_PULSE_PATH="$USB/RX3_RUNTIME/sprite-pulse"
+            export RX3_SPRITE_CHOICE_PATH="$USB/RX3_RUNTIME/sprite-choice"
             echo "boot ${BOOT_NUMBER:-0} id ${BOOT_ID:-0}" >> "$status_path"
             running_status=$(rbp_environment_value RX3_SPRITE_STATUS_PATH)
             if [ "$running_status" != "$status_path" ]; then

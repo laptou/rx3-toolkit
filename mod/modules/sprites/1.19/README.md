@@ -11,6 +11,11 @@ centres it on the view; anchor 2 rests it on the bottom edge. Source art is
 scaled. Index 0 is transparent. The sprite follows the deck that is playing;
 when both play, it switches to one that is more than twice as loud.
 
+BEAT JUMP page 2 is the sprite menu. Page 1 still beat-jumps. Pads 1–8 are the
+first eight catalog packs. Press a pad and both decks show that pack. Press
+the lit pad again and the overlay turns off. The choice is kept in
+`RX3_RUNTIME/sprite-choice`. This mod is not for use with CHARIZARD2.
+
 While sprites run, UTILITY > ON AIR DISPLAY becomes SPRITE PULSE. With it ON,
 the sprite grows by up to 30% on each kick drum (the deck's audio through a
 ~150 Hz low-pass). The choice is kept in `RX3_RUNTIME/sprite-pulse`. The

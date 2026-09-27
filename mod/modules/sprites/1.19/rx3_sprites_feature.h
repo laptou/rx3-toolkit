@@ -86,7 +86,9 @@ struct sprite_job {
 struct sprite_request {
     unsigned deck;
     unsigned generation;
-    char stem[48];
+    /* nonzero: stem is a catalog filename, and both decks load that pack. */
+    int manual;
+    char stem[64];
 };
 
 struct sprite_deck {
@@ -146,6 +148,16 @@ struct sprite_bass {
 static struct sprite_bass sprite_bass[2];
 static unsigned sprite_tick_ms;
 static unsigned sprite_logged;
+
+/* beat jump page 2 offers the first SPRITE_PAD_COUNT eligible catalog names.
+   an empty choice file keeps the per-track pick. */
+#define SPRITE_PAD_COUNT 8u
+#define SPRITE_CHOICE_CAP 64u
+static char sprite_catalog[SPRITE_PACK_LIMIT][SPRITE_CHOICE_CAP];
+static unsigned sprite_catalog_count;
+static char sprite_choice_file[SPRITE_CHOICE_CAP];
+static int sprite_choice_off;
+static const char *sprite_choice_path;
 
 #include "rx3_sprites_menu.h"
 
@@ -317,6 +329,16 @@ static int sprite_publish(struct sprite_job *job)
 
 static void sprite_note(unsigned bit, const char *message);
 
+static int sprite_same(const char *left, const char *right)
+{
+    unsigned index = 0;
+    if (!left || !right)
+        return 0;
+    while (left[index] && left[index] == right[index])
+        index++;
+    return left[index] == right[index];
+}
+
 static void *sprite_loader(void *opaque)
 {
     struct sprite_request *request = opaque;
@@ -382,7 +404,16 @@ static void *sprite_loader(void *opaque)
         sprite_log_once(8u, "sprites disabled: no eligible pack for this track");
         goto release_catalog;
     }
-    {
+    if (request->manual) {
+        chosen = count;
+        for (index = 0; index < eligible_count; index++)
+            if (sprite_same(names[eligible[index]], request->stem)) {
+                chosen = eligible[index];
+                break;
+            }
+        if (chosen >= count)
+            goto release_catalog;
+    } else {
         const char *eligible_names[SPRITE_PACK_LIMIT];
         unsigned pick;
         for (index = 0; index < eligible_count; index++)
@@ -688,6 +719,11 @@ static void sprite_update(int screen_up, unsigned now)
     int lead = screen_up ? sprite_pick_lead() : -1;
     int x;
     int y;
+    /* a pad set the choice to off. the window stays closed. */
+    if (sprite_choice_off) {
+        sprite_window_close(window);
+        return;
+    }
     if (lead < 0 || sprite_frame_now(&sprite_decks[lead], &frame)) {
         sprite_window_close(window);
         return;
@@ -806,7 +842,115 @@ static int sprites_feature_configured(void)
     return sprites_dir != 0;
 }
 
-static int sprite_start_load(unsigned deck, const char *stem)
+/* the same catalog the loader reads: newline-terminated, no CR, hidden
+   lines skipped, mode 1 or 2. names are copied out so the pads can keep them. */
+static void sprite_catalog_load(void)
+{
+    char path[512];
+    size_t catalog_size = 0;
+    char *catalog;
+    size_t cursor = 0;
+    const char *names[SPRITE_PACK_LIMIT];
+    unsigned count = 0;
+    unsigned index;
+    sprite_catalog_count = 0;
+    if (!sprites_dir || sprite_join(path, sizeof(path), "catalog.txt"))
+        return;
+    catalog = sprite_slurp(path, &catalog_size, 8192u);
+    if (!catalog)
+        return;
+    while (cursor < catalog_size && count < SPRITE_PACK_LIMIT) {
+        size_t end = cursor;
+        while (end < catalog_size && catalog[end] != '\n') {
+            if (catalog[end] == '\r') {
+                munmap(catalog, catalog_size);
+                return;
+            }
+            end++;
+        }
+        if (end == catalog_size) {
+            munmap(catalog, catalog_size);
+            return;
+        }
+        catalog[end] = 0;
+        if (catalog[cursor] && catalog[cursor] != '.')
+            names[count++] = catalog + cursor;
+        cursor = end + 1u;
+    }
+    for (index = 0; index < count; index++) {
+        struct rx3_sprite_file_header *peek;
+        unsigned length = 0;
+        char *dest;
+        if (sprite_join(path, sizeof(path), names[index]))
+            continue;
+        peek = sprite_prefix(path, 64u);
+        if (!peek)
+            continue;
+        if (peek->mode == 1u || peek->mode == 2u) {
+            dest = sprite_catalog[sprite_catalog_count];
+            while (names[index][length] &&
+                   length + 1u < sizeof(sprite_catalog[0])) {
+                dest[length] = names[index][length];
+                length++;
+            }
+            dest[length] = 0;
+            /* a name that does not fit cannot be loaded through the choice file. */
+            if (!names[index][length])
+                sprite_catalog_count++;
+        }
+        munmap(peek, 64u);
+    }
+    munmap(catalog, catalog_size);
+    if (sprite_catalog_count > SPRITE_PAD_COUNT)
+        sprite_log_once(512u,
+                        "sprites: later packs are not on the beat jump pads");
+}
+
+/* missing file: per-track pick. "off": draw nothing. any other line is a
+   catalog filename, or it falls back to the per-track pick. */
+static void sprite_choice_load(void)
+{
+    char buffer[80];
+    int fd;
+    int got;
+    unsigned length = 0;
+    unsigned index;
+    sprite_choice_path = getenv("RX3_SPRITE_CHOICE_PATH");
+    sprite_choice_off = 0;
+    sprite_choice_file[0] = 0;
+    if (!sprite_choice_path || !sprite_choice_path[0])
+        return;
+    fd = open(sprite_choice_path, O_RDONLY);
+    if (fd < 0)
+        return;
+    got = (int)read(fd, buffer, sizeof(buffer) - 1u);
+    close(fd);
+    if (got <= 0)
+        return;
+    buffer[got] = 0;
+    while (buffer[length] && buffer[length] != '\n' && buffer[length] != '\r')
+        length++;
+    buffer[length] = 0;
+    if (!buffer[0])
+        return;
+    if (sprite_same(buffer, "off")) {
+        sprite_choice_off = 1;
+        return;
+    }
+    for (index = 0; index < sprite_catalog_count; index++)
+        if (sprite_same(buffer, sprite_catalog[index])) {
+            unsigned copy = 0;
+            while (buffer[copy] && copy + 1u < sizeof(sprite_choice_file)) {
+                sprite_choice_file[copy] = buffer[copy];
+                copy++;
+            }
+            sprite_choice_file[copy] = 0;
+            return;
+        }
+    sprite_log_once(1024u, "sprites: saved sprite is not in the catalog");
+}
+
+static int sprite_start_load(unsigned deck, const char *stem, int manual)
 {
     struct sprite_request *request;
     pthread_t thread;
@@ -820,6 +964,7 @@ static int sprite_start_load(unsigned deck, const char *stem)
     memset(request, 0, sizeof(*request));
     request->deck = deck;
     request->generation = sprite_decks[deck].generation;
+    request->manual = manual;
     for (index = 0; stem[index] && index + 1u < sizeof(request->stem); index++)
         request->stem[index] = stem[index];
     request->stem[index] = 0;
@@ -831,6 +976,8 @@ static int sprite_start_load(unsigned deck, const char *stem)
     return -1;
 }
 
+#include "rx3_sprites_pads.h"
+
 static int sprites_feature_install(void)
 {
     /* a track load used to be the only way in. after a restart the decks
@@ -838,11 +985,20 @@ static int sprites_feature_install(void)
     sprite_note(16u, "sprite feature active");
     if (!sprites_dir)
         sprite_note(64u, "sprite directory is missing");
-    else {
-        sprite_start_load(0u, "boot");
-        sprite_start_load(1u, "boot");
+    else
+        sprite_catalog_load();
+    sprite_choice_load();
+    if (sprites_dir && !sprite_choice_off) {
+        if (sprite_choice_file[0]) {
+            sprite_start_load(0u, sprite_choice_file, 1);
+            sprite_start_load(1u, sprite_choice_file, 1);
+        } else {
+            sprite_start_load(0u, "boot", 0);
+            sprite_start_load(1u, "boot", 0);
+        }
     }
     sprite_menu_install();
+    sprite_pads_install();
     if (!rx3_deck_tap_ready())
         log_line("sprites: playback position unavailable, beat sync stays off");
     return 1;
@@ -851,6 +1007,7 @@ static int sprites_feature_install(void)
 static void sprites_feature_remove(void)
 {
     unsigned deck;
+    sprite_pads_remove();
     sprite_menu_remove();
     for (deck = 0; deck < 2u; deck++) {
         struct sprite_job *job = sprite_jobs[deck];
@@ -883,11 +1040,15 @@ static void sprites_feature_track_did_load(unsigned int deck, void *reader,
 {
     char stem[RX3_SPRITE_NAME_LIMIT + 1u];
     (void)reader;
-    if (deck >= 2u || !sprites_dir)
+    if (deck >= 2u || !sprites_dir || sprite_choice_off)
         return;
+    if (sprite_choice_file[0]) {
+        sprite_start_load(deck, sprite_choice_file, 1);
+        return;
+    }
     if (rx3_sprite_stem((const char *)track_info, stem, sizeof(stem)))
         return;
-    sprite_start_load(deck, stem);
+    sprite_start_load(deck, stem, 0);
 }
 
 static void sprites_feature_destroy_deck(unsigned int deck)

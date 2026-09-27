@@ -15,5 +15,6 @@ Nothing in this procedure writes internal flash. Boot without the stick, or powe
 6. Beat sync on a constant-tempo track and a variable-tempo track. Include cue, seek, loop, scratch, tempo bend, and Master Tempo. Beat mode draws nothing until the player beat-clock address is proven and stored. The expected log until then is `sprites: beat clock unavailable`.
 7. Stems and sprites together for a long playback, including USB browsing.
 8. A truncated pack, a missing `RX3_SPRITES` directory, an unsupported layout, and a forced player restart. Stock audio and the stock interface must continue. The rejected test must roll the player binary back.
+9. BEAT JUMP page 2: press a pad to select that catalog sprite on both decks, press the lit pad to turn the overlay off, confirm page 1 still beat-jumps, and confirm both decks show the chosen pack.
 
 Keep logs, checksums, timings, and the screenshots you need. Do not commit keys, firmware, player binaries, image tables, separated audio, or artwork you do not own.

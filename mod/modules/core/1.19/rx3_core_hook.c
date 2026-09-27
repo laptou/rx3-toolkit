@@ -363,6 +363,8 @@ static void sprites_feature_destroy_deck(unsigned int deck);
 static void sprites_feature_playhead(unsigned int deck, long position);
 static void sprites_feature_after_image(void *render, void *image,
                                        uint16_t window_layer, uint32_t image_id);
+static uint32_t sprites_feature_image_swap(uint32_t image_id);
+static int sprites_feature_on_pad(void *innards, const void *key);
 static int sidechain_feature_configured(void);
 static int sidechain_feature_install(void);
 static void sidechain_feature_remove(void);
@@ -433,6 +435,8 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         .playhead = sprites_feature_playhead,
         .after_image = sprites_feature_after_image,
         .channel_block = sprites_feature_channel_block,
+        .image_swap = sprites_feature_image_swap,
+        .on_pad = sprites_feature_on_pad,
     },
     {
         .name = "sidechain",

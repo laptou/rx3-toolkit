@@ -1,7 +1,7 @@
 {
   "id": "sprites",
   "name": "Animated sprites",
-  "description": "Draw one random hard-edged animation from RX3_SPRITES over each deck waveform. Fixed rate, or the player beat clock once that address is proven. Off unless the USB directory is present.",
+  "description": "Draw one hard-edged animation from RX3_SPRITES over the waveform. BEAT JUMP page 2 picks one of the first eight packs or turns the overlay off. Off unless the USB directory is present.",
   "firmware": "1.19",
   "default": false,
   "order": 45,
@@ -19,6 +19,8 @@
   "build_files": [
     "rx3_sprites_logic.h",
     "rx3_sprites_menu.h",
+    "rx3_sprites_glyphs.h",
+    "rx3_sprites_pads.h",
     "rx3_sprites_feature.h"
   ]
 }

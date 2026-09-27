@@ -120,3 +120,34 @@ require(
     and 'export RX3_SPRITE_PULSE_PATH="$USB/RX3_RUNTIME/sprite-pulse"' in MODULE,
     "the pulse switch must survive a restart",
 )
+PADS = (Path(__file__).resolve().parent / "rx3_sprites_pads.h").read_text()
+require(
+    '#include "rx3_sprites_pads.h"' in FEATURE
+    and "+ 0x74u) != 3u" in PADS
+    and "[0x7c]" in PADS
+    and "0x4117u" in PADS
+    and "0x411eu" in PADS,
+    "beat jump page 2 (pad mode 3, page byte set) owns pads 1-8",
+)
+require(
+    'export RX3_SPRITE_CHOICE_PATH="$USB/RX3_RUNTIME/sprite-choice"' in MODULE
+    and 'sprite_choice_path = getenv("RX3_SPRITE_CHOICE_PATH")' in FEATURE,
+    "the pad choice must survive a restart",
+)
+require(
+    "0x13e8u" in PADS and "0x13e9u" in PADS
+    and "0x13e6u" in PADS and "0x13e7u" in PADS
+    and "0x13eau" in PADS and "0x13ebu" in PADS
+    and "0x13ecu" in PADS and "0x13edu" in PADS
+    and "0x13f0u" in PADS and "0x13f1u" in PADS
+    and "0x13eeu" in PADS and "0x13efu" in PADS
+    and "0x13deu" in PADS and "0x13dfu" in PADS
+    and "0x13e0u" in PADS and "0x13e1u" in PADS,
+    "page 2 pad glyphs, off then on",
+)
+require(
+    ".image_swap = sprites_feature_image_swap" in HOOK
+    and ".on_pad = sprites_feature_on_pad" in HOOK
+    and "sprites_feature_image_swap" in PADS,
+    "sprites relabels the page 2 pads through the feature row",
+)

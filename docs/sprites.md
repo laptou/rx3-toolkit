@@ -59,3 +59,11 @@ Fixed-rate frames follow wall time, so a skipped refresh jumps ahead. Beat-mode 
 The clock is rbp's own beat grid for the loaded track, read at the playhead and interpolated between grid beats. Loops start on a bar downbeat. A track without a grid logs `sprites: beat clock unavailable` once and its beat-mode pack draws nothing. Fixed-rate packs still play.
 
 A bad pack disables that deck only. Stock drawing and stems keep running.
+
+## BEAT JUMP page 2
+
+Press BEAT JUMP once for page 1. That page still beat-jumps. Press it again for page 2. Pads 1–8 are the first eight eligible packs in `catalog.txt`, in that order. Press a pad and both decks show that pack, still in one window. Press the lit pad again and the overlay turns off. An empty pad does nothing. Packs after the eighth stay in the catalog for the per-track pick and are not on a pad.
+
+Until a pad is pressed, each deck still picks its own pack. The choice is kept in `RX3_RUNTIME/sprite-choice`: missing means the per-track pick, `off` means the overlay stays closed, and a catalog filename means that pack. A saved name that is no longer in the catalog falls back to the per-track pick.
+
+This mod is not for use with CHARIZARD2.
