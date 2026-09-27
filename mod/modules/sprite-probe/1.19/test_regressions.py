@@ -20,6 +20,7 @@ require(MANIFEST["default"] is False, "the probe must be off unless selected")
 require(MANIFEST["requires"] == ["sprites"], "the probe needs the sprite module")
 require(
     "export RX3_SPRITE_PROBE=1" in MODULE
-    and "unset RX3_SPRITE_PROBE" in MODULE,
-    "the probe must be a single environment switch with a rollback",
+    and "register_prepare_hook sprite_probe_prepare" in MODULE
+    and "register_rollback_hook" not in MODULE,
+    "the probe must be a single environment switch",
 )

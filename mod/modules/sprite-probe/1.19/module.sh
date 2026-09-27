@@ -14,10 +14,4 @@ sprite_probe_prepare()
     return 0
 }
 
-sprite_probe_rollback()
-{
-    unset RX3_SPRITE_PROBE
-}
-
 register_prepare_hook sprite_probe_prepare
-register_rollback_hook sprite_probe_rollback

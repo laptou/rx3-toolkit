@@ -89,7 +89,19 @@ load_module()
     }
     CURRENT_MODULE=""
     CURRENT_NAMESPACE=""
-    . "$module" || MODULE_LOAD_FAILED=1
+    # module_begin can succeed and a later unknown command can still fail the
+    # script. that error goes to stderr, which the session log otherwise misses,
+    # leaving only the generic STOP below.
+    _rx3_sourced=0
+    if [ "$LOGGING" = "1" ]; then
+        . "$module" 2>>"$LOG" || _rx3_sourced=$?
+    else
+        . "$module" || _rx3_sourced=$?
+    fi
+    if [ "$_rx3_sourced" != "0" ]; then
+        say "FAILED: $runtime_directory module script failed"
+        MODULE_LOAD_FAILED=1
+    fi
     [ -n "$CURRENT_MODULE" ] || {
         say "FAILED: $runtime_directory did not declare a module contract"
         MODULE_LOAD_FAILED=1

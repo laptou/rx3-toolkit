@@ -46,6 +46,23 @@ def run_shell(body: str) -> subprocess.CompletedProcess[str]:
 
 
 class ModuleApiTests(unittest.TestCase):
+    def test_every_shipped_module_script_sources_cleanly(self):
+        """Sourcing is the contract check the player runs. An unknown command
+        there aborts the whole runtime before the firmware hash."""
+        scripts = sorted((ROOT / "mod/modules").glob("*/1.19/module.sh"))
+        scripts.append(ROOT / "mod/1.19/compatibility.sh")
+        self.assertGreaterEqual(len(scripts), 2)
+        for script in scripts:
+            result = run_shell(
+                f'''. "{script}" || exit 10
+[ -n "$CURRENT_MODULE" ] || exit 11
+[ "$MODULE_LOAD_FAILED" = 0 ] || exit 12
+'''
+            )
+            self.assertEqual(
+                result.returncode, 0, f"{script.name}: {result.stderr}"
+            )
+
     def test_namespaced_lifecycle_hook_is_registered_and_run(self):
         result = run_shell(
             r'''

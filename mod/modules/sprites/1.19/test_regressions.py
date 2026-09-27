@@ -20,8 +20,8 @@ require(
     "register_prepare_hook sprites_prepare" in MODULE
     and 'export RX3_SPRITES_DIR="$SPRITES_LINK"' in MODULE
     and "RX3_SPRITE_NONCE" in MODULE
-    and "sprites_rollback" in MODULE,
-    "the module must publish a stable sprite directory and clear it on rollback",
+    and "register_rollback_hook" not in MODULE,
+    "the module must publish a stable sprite directory during prepare",
 )
 require(
     "return 0" in MODULE and "[ -d \"$USB/RX3_SPRITES\" ]" in MODULE,

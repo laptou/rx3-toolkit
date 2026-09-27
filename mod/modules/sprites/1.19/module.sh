@@ -22,12 +22,4 @@ sprites_prepare()
     return 0
 }
 
-sprites_rollback()
-{
-    rm -f "$SPRITES_LINK"
-    unset RX3_SPRITES_DIR
-    unset RX3_SPRITE_NONCE
-}
-
 register_prepare_hook sprites_prepare
-register_rollback_hook sprites_rollback
