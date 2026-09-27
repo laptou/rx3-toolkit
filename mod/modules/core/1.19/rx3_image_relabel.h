@@ -177,7 +177,12 @@ static uint32_t rx3_relabel_image(uint32_t stock,
             return relabel_entries[index].id;
     if (relabel_count >= RELABEL_SLOTS || !tab_assets_ready)
         return stock;
+    log_number("relabel: asked for stock image ", stock);
     id = relabel_build(stock, mask);
+    if (id == stock)
+        log_line("relabel:   kept the stock image");
+    else
+        log_number("relabel:   drawn as ", id);
     relabel_entries[relabel_count].stock = stock;
     relabel_entries[relabel_count].mask = mask;
     relabel_entries[relabel_count].id = id;
