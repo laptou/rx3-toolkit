@@ -9,10 +9,21 @@
 *.o
 *.a
 *.rx3stem
+*.rx3spr
+*.rx3idx
+!tests/fixtures/**/*.rx3spr
+!tests/fixtures/**/*.rx3idx
 
 # Private laboratory material
 /local/
 /work/
+/operator/
+/firmware/
+/traces/
+/RX3_STEMS/
+/RX3_SPRITES/
+*.rbp
+*.imagedump
 *.UPD
 *.upd
 *.iso

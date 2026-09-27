@@ -1,2 +1,4 @@
 cryptography==50.0.0
 pycdlib==1.14.0
+pillow==12.3.0
+pyrekordbox==0.4.4

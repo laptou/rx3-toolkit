@@ -11,6 +11,14 @@ In the European Union, Directive 2009/24/EC provides for this. Article 5(3) allo
 
 The work here is confined to that purpose. It targets one device and one firmware revision, it is used on hardware the operator owns, and its output is of no use to anyone who does not have that hardware in front of them.
 
+## Manufacturer source is not the player application
+
+AlphaTheta publishes GPL and LGPL source for the XDJ-RX3 platform because those licences require it. That publication is the Linux and library stack. It is not the source of the proprietary player application, and it is not a licence to distribute modified firmware images. This project does not publish patched update packages, manufacturer executables, or device keys.
+
+## Artwork and music
+
+Sprite frames and stem audio are supplied by the person using the tools. This repository ships only geometric test art. It does not ship third-party characters, and it does not grant any right to someone else's artwork or recordings.
+
 ## What is not distributed
 
 Nothing in this repository, its history, or its releases contains:
