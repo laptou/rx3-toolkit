@@ -158,9 +158,42 @@ for asset in (
         f"{asset} must be an exact 180x50 RGB565 bitmap",
     )
     require(asset in CORE_MANIFEST, f"{asset} must be packaged in autoexec")
+def shell_le_word(literal: str) -> int:
+    raw = literal.encode("ascii").decode("unicode_escape").encode("latin1")
+    if len(raw) != 4:
+        raise AssertionError(f"patch word is {len(raw)} bytes")
+    return int.from_bytes(raw, "little")
+
+
+def movw_operand(word: int) -> tuple[int, int]:
+    if (word >> 28) != 0xE or ((word >> 20) & 0xFF) != 0x30:
+        raise AssertionError(f"0x{word:08x} is not movw")
+    register = (word >> 12) & 0xF
+    immediate = (((word >> 16) & 0xF) << 12) | (word & 0xFFF)
+    return register, immediate
+
+
+patch_line = next(
+    entry for entry in CORE_MODULE.splitlines()
+    if entry.startswith("register_patch 1874220 ")
+)
+stock_literal, patched_literal = [
+    part for part in patch_line.split("'") if part.startswith("\\")
+]
+patched_word = shell_le_word(patched_literal)
+require(
+    movw_operand(shell_le_word(stock_literal)) == (3, 0x15CC)
+    and movw_operand(patched_word) == (3, 0x1703),
+    "the image-table bound must stay movw r3, with the last legal id in r3",
+)
+require(
+    patched_word.to_bytes(4, "little").hex()
+    in (REPOSITORY / "tools/rx3_payload/cli.py").read_text(),
+    "the payload image-table word must match the device patch",
+)
 require(
     "register_patch 1874220 '\\314\\065\\001\\343' "
-    "'\\003\\147\\001\\343' image-table-private-ids"
+    "'\\003\\067\\001\\343' image-table-private-ids"
         in CORE_MODULE
     and "STOCK_IMAGE_COUNT 0x15cdu" in HOOK
     and "EXTENDED_IMAGE_COUNT 0x1704u" in HOOK
