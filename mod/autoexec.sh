@@ -63,8 +63,6 @@ export BOOT_NUMBER BOOT_ID BOOT_TAG
     echo "boot $BOOT_NUMBER"
     echo "id $BOOT_ID"
     echo "session session-$BOOT_TAG.txt"
-    echo "trace sprite-trace-$BOOT_TAG.log"
-    echo "status sprite-status-$BOOT_TAG.log"
     echo "stdout rbp-stdout-$BOOT_TAG.txt"
 } > "$OUT/latest.txt" 2>/dev/null
 
@@ -381,6 +379,9 @@ if [ "$FAILED" != "0" ]; then
 fi
 say "write verified: $PATCH_COUNT/$PATCH_COUNT words"
 
+# readiness and diagnostics belong to one process. a file the previous rbp
+# left behind would declare the new one up before it can see the drive.
+rm -f $RBP_READY_FILES $RBP_DIAGNOSTIC_FILES
 launch_rbp "$RBP_OUTPUT"
 wait_for_rbp "$NEW"
 if [ ! -d "/proc/$NEW" ]; then

@@ -117,25 +117,9 @@ def provision(
 
 
 def trace_log(destination: Path) -> Path | None:
-    """The trace from the latest boot, then any older numbered trace."""
-    runtime = destination / "RX3_RUNTIME"
-    latest = runtime / "latest.txt"
-    if latest.is_file():
-        for line in latest.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("trace "):
-                named = runtime / line.split(None, 1)[1].strip()
-                if named.is_file():
-                    return named
-    numbered: list[tuple[int, Path]] = []
-    if runtime.is_dir():
-        for path in runtime.glob("sprite-trace-*.log"):
-            suffix = path.name[len("sprite-trace-") : -len(".log")]
-            if suffix.isdigit():
-                numbered.append((int(suffix), path))
-    if numbered:
-        return max(numbered)[1]
-    plain = runtime / "sprite-trace.log"
-    return plain if plain.is_file() else None
+    """The trace the player appends to on the stick, one `boot` line per boot."""
+    trace = destination / "RX3_RUNTIME" / "sprite-trace.log"
+    return trace if trace.is_file() else None
 
 
 def _resolve_anchors(destination: Path, anchor_text: str) -> str:

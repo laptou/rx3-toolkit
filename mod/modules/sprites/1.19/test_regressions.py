@@ -21,7 +21,9 @@ require(
     and 'export RX3_SPRITES_DIR="$SPRITES_LINK"' in MODULE
     and "RX3_SPRITE_NONCE" in MODULE
     and "export RX3_SPRITE_TRACE=1" in MODULE
-    and 'trace_path="$USB/RX3_RUNTIME/sprite-trace-${BOOT_TAG:-0000}.log"' in MODULE
+    and 'trace_path="$USB/RX3_RUNTIME/sprite-trace.log"' in MODULE
+    and 'status_path="$USB/RX3_RUNTIME/sprite-status.log"' in MODULE
+    and "BOOT_TAG" not in MODULE
     and 'export RX3_SPRITE_TRACE_PATH="$trace_path"' in MODULE
     and "anchors.proof" in MODULE
     and "rbp_environment_value RX3_SPRITE_TRACE" in MODULE

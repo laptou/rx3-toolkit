@@ -126,7 +126,8 @@ core_prepare()
 core_after_launch()
 {
     [ "$CORE_INSTALLED" = "1" ] || return 0
-    if [ "$CORE_RESIDENT" = "1" ]; then
+    # another module can still restart rbp after core_prepare saw it resident.
+    if [ "$CORE_RESIDENT" = "1" ] && [ "$NEED_RBP_RESTART" = "0" ]; then
         say "OK: performance core still active from the previous insertion"
         return 0
     fi
