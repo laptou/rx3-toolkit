@@ -35,7 +35,7 @@ A source folder holds `manifest.json` plus either a PNG sequence or one sheet.
 | frames_per_beat, beats_per_loop | their product equals `frame_count` for `beat` |
 | anchor | `center` or `bottom-center` |
 
-Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette: at most 255 opaque colours, or 15 when the proven format is 4 bits per pixel. Extra colours are reduced to that palette with no dither.
+Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. The measured player format is 8 bits per pixel.
 
 Repeat a write from the command line. Diagnostics go to stderr. `-v` prints the summary, `-vv` also prints each PNG name, and `-q` keeps errors only.
 
@@ -44,7 +44,16 @@ python -m tools.rx3_sprites preview --source DIR -v
 python -m tools.rx3_sprites write --source DIR --dest DIR
 ```
 
-`--format-proof` and `--anchors` are text files from the hardware check. Omit them and the command warns: the format byte is the unproven placeholder, and a missing anchor file means the pack loads and draws nothing.
+`--format-proof` must be the measured file below. Omit it and the command writes that file. `--anchors` is still the hardware check for where to draw. Without it the player loads the pack and draws nothing.
+
+```
+RX3FMT1
+format 2
+palette 1
+bpp 8
+transparent 0
+entry 2
+```
 
 The Toolbox **Animated sprites** tab previews the mask and writes the same folder. It does not edit Rekordbox databases or audio files. It warns when the packs exceed the 2 MiB player ceiling. The player still refuses a pack that does not fit.
 
@@ -52,7 +61,7 @@ The Toolbox **Animated sprites** tab previews the mask and writes the same folde
 
 A `.rx3spr` file is little-endian. It starts with the eight bytes `RX3SPR1` and a trailing NUL, then version 1 and a 64-byte header. The header names the size, frame count, mode (`1` fixed rate, `2` beat), the timing fields, the anchor, the palette format, and the body length. Fourteen pad bytes after the packed header must be zero. A 32-bit ISO-HDLC checksum covers the header with that field zeroed, then the body. The file ends at the body. Extra bytes are rejected.
 
-The body is the UTF-8 name, a 16-bit colour palette (index 0 is transparent), then the frames. 4-bit frames pack two pixels per byte, high nibble first.
+The body is the UTF-8 name, a 16-bit colour palette (index 0 is transparent), then the frames. Each pixel is one byte.
 
 ## On the player
 

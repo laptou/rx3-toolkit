@@ -41,6 +41,11 @@ require(
     "sprite drawing must stay inside PAL_DRAW_IMAGE and the private id pool",
 )
 require(
+    "values[2] != 8u" in FEATURE
+    and "format 2, palette, 8 bpp" in FEATURE,
+    "the player must accept only the measured 8-bit hard-mask",
+)
+require(
     "sprites disabled: hard-mask format is not proven" in FEATURE
     and "sprites disabled: waveform anchor is not proven" in FEATURE
     and "sprites disabled: pack failed validation" in FEATURE,

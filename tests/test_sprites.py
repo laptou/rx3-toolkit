@@ -16,7 +16,7 @@ from tools.rx3_sprites.cli import main as sprites_main
 from tools.rx3_sprites.fixture import checker, probe_blob, proof_8
 from tools.rx3_sprites.limits import MEMORY_CEILING
 from tools.rx3_sprites.pack import PackError, decode, encode
-from tools.rx3_sprites.proof import FormatProof, ProofError, parse_anchors, parse_format
+from tools.rx3_sprites.proof import ProofError, parse_anchors, parse_format
 from tools.rx3_sprites.provision import write_tree
 from tools.rx3_sprites.quantize import quantize
 from tools.rx3_sprites.select import choose
@@ -77,17 +77,17 @@ class PackTests(unittest.TestCase):
         with self.assertRaises(PackError):
             decode(blob + b"\x00")
 
-    def test_alpha_cutoff_and_four_bit_limit(self):
+    def test_alpha_cutoff(self):
         faint = [(255, 0, 0, 127)]
         solid = [(255, 0, 0, 128)]
         _, faint_frames = quantize([faint], proof_8())
         _, solid_frames = quantize([solid], proof_8())
         self.assertEqual(faint_frames[0], b"\x00")
         self.assertEqual(solid_frames[0], b"\x01")
-        many = [[(index * 16, 0, 0, 255) for index in range(16)]]
-        palette, packed = quantize(many, FormatProof(2, 1, 4, 0, 2))
-        self.assertLessEqual(len(palette) // 2, 16)
-        self.assertTrue(all(pixel >> 4 <= 15 and (pixel & 0xF) <= 15 for pixel in packed[0]))
+        with self.assertRaises(ProofError):
+            parse_format(
+                "RX3FMT1\nformat 2\npalette 1\nbpp 4\ntransparent 0\nentry 2\n"
+            )
 
     def test_too_many_colours_share_one_palette(self):
         pixels = [(index % 32 * 8, (index // 32) % 32 * 8, 0, 255) for index in range(300)]
@@ -236,12 +236,16 @@ class CliTests(unittest.TestCase):
             self.assertEqual(written, 0)
             self.assertEqual(stdout.getvalue(), "")
             text = stderr.getvalue()
-            self.assertIn("WARNING rx3.sprites: format proof is the unproven placeholder", text)
+            tree = root / "RX3_SPRITES"
+            self.assertNotIn("unproven", text)
+            self.assertEqual(
+                (tree / "format.proof").read_text(encoding="utf-8"),
+                "RX3FMT1\nformat 2\npalette 1\nbpp 8\ntransparent 0\nentry 2\n",
+            )
             self.assertIn(
                 "WARNING rx3.sprites: no anchor proof; the player will load the pack and draw nothing",
                 text,
             )
-            tree = root / "RX3_SPRITES"
             self.assertTrue((tree / "squares.rx3spr").is_file())
             self.assertTrue((tree / "catalog.txt").is_file())
             self.assertFalse((tree / "tracks.rx3idx").exists())

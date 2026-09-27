@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 # Hardware validation
 
-These checks are run on an XDJ-RX3 with firmware 1.19. This repository does not contain the results. A missing proof file keeps deck sprites off. Do not invent a format byte or an anchor from a guess.
+These checks are run on an XDJ-RX3 with firmware 1.19. The hard-mask format below is the one a passing `format.proof` reported. Anchors are still per player: a missing anchor file keeps deck sprites off. Do not invent an anchor from a guess.
 
 Nothing in this procedure writes internal flash. Boot without the stick, or power-cycle, to return to stock.
 
@@ -26,14 +26,14 @@ Keep logs, checksums, timings, and the screenshots you need. Do not commit keys,
 
 ```
 RX3FMT1
-format N
+format 2
 palette 1
-bpp 4
+bpp 8
 transparent 0
 entry 2
 ```
 
-`bpp` is 4 or 8. `anchors.proof` starts with `RX3ANC1` and then one line per anchor:
+That is the measured format. `anchors.proof` starts with `RX3ANC1` and then one line per anchor:
 
 ```
 layer N id N deck 0

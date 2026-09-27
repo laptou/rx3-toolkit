@@ -279,8 +279,10 @@ static int sprite_parse_format(const char *text, size_t length,
     }
     if (count != 5u || cursor != length)
         return -1;
-    if (values[1] != 1u || (values[2] != 4u && values[2] != 8u) ||
-        values[0] > 255u || values[3] != 0u || values[4] != 2u)
+    /* firmware 1.19 hard-mask, copied from a passing format.proof:
+       format 2, palette, 8 bpp, transparent index 0, 16-bit entries. */
+    if (values[0] != 2u || values[1] != 1u || values[2] != 8u ||
+        values[3] != 0u || values[4] != 2u)
         return -1;
     proof->format_byte = values[0];
     proof->palette = values[1];

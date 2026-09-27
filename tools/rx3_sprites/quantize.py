@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
 """Turn RGBA frames into a hard-edged indexed palette.
 
-Index 0 is transparent. Every opaque pixel in the animation shares the remaining
-slots: 255 at 8 bits, 15 at 4. Colours past that limit are reduced to one
-palette for the whole sequence, with no dither.
+Index 0 is transparent. Every opaque pixel shares the other 255 slots of the
+measured 8-bit palette. Colours past that limit are reduced to one palette
+for the whole sequence, with no dither.
 """
 
 from __future__ import annotations
@@ -31,7 +31,9 @@ def quantize(frames: list[list[tuple[int, int, int, int]]], proof: FormatProof) 
 
     Alpha below 128 is transparent. Anything else is opaque. There is no soft edge.
     """
-    max_opaque = 15 if proof.bpp == 4 else 255
+    if proof.bpp != 8:
+        raise QuantizeError("the measured format is 8 bits per pixel")
+    max_opaque = 255
     masked: list[list[tuple[int, int, int] | None]] = []
     opaque: list[tuple[int, int, int]] = []
     for frame in frames:
@@ -74,7 +76,7 @@ def quantize(frames: list[list[tuple[int, int, int, int]]], proof: FormatProof) 
     palette += (0).to_bytes(2, "little")
     for colour in colours:
         palette += colour.to_bytes(2, "little")
-    packed = [_pack(pixels, proof.bpp) for pixels in indexed]
+    packed = [bytes(pixels) for pixels in indexed]
     return bytes(palette), packed
 
 
@@ -109,12 +111,3 @@ def _write_back(
     return rewritten
 
 
-def _pack(pixels: list[int], bpp: int) -> bytes:
-    if bpp == 8:
-        return bytes(pixels)
-    out = bytearray()
-    for offset in range(0, len(pixels), 2):
-        high = pixels[offset]
-        low = pixels[offset + 1] if offset + 1 < len(pixels) else 0
-        out.append((high << 4) | low)
-    return bytes(out)

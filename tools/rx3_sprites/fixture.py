@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from tools.rx3_sprites.proof import FormatProof
+from tools.rx3_sprites.proof import FormatProof, proven_format
 from tools.rx3_sprites.quantize import quantize
 
 
 def proof_8() -> FormatProof:
-    return FormatProof(format_byte=2, palette=1, bpp=8, transparent=0, entry_size=2)
+    return proven_format()
 
 
 def checker(width: int, height: int, frame: int) -> list[tuple[int, int, int, int]]:

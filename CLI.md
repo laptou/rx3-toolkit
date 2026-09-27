@@ -20,7 +20,7 @@ Both commands take the same optional flags:
 
 | Flag | Effect |
 | --- | --- |
-| `--format-proof PATH` | Text from the hardware check. Without this file the command warns, and the format byte is the unproven placeholder. |
+| `--format-proof PATH` | Must match the measured format: format 2, palette 1, 8 bpp, transparent 0, entry 2. Without this file the command writes that format. |
 | `--anchors PATH` | Text from the hardware check. Without this file the command warns. The player loads the pack and draws nothing. |
 | `-v`, `--verbose` | Summary on stderr. A second `-v` also names each PNG. |
 | `-q`, `--quiet` | Errors only. A second `-q` silences the log. |

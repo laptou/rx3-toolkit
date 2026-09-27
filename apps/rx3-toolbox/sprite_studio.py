@@ -96,7 +96,6 @@ class SpriteStudioPane(ttk.Frame):
                 pathlib.Path(self.destination.get()),
                 format_text,
                 self.anchor_box.get("1.0", "end"),
-                format_text.strip() == self.format_text.get().strip(),
             )
         except (SourceError, ProofError, ProvisionError, OSError) as error:
             self.status.set(str(error))
@@ -121,11 +120,8 @@ def provision(
     destination: pathlib.Path,
     format_text: str,
     anchor_text: str,
-    format_is_default: bool = False,
 ) -> str:
-    return write_sprites(
-        source, destination, format_text, anchor_text, format_is_default=format_is_default,
-    )
+    return write_sprites(source, destination, format_text, anchor_text)
 
 
 def self_test() -> None:

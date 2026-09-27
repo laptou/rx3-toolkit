@@ -29,6 +29,15 @@ class FormatProof:
         )
 
 
+def proven_format() -> FormatProof:
+    """Firmware 1.19 hard-mask, measured from a passing format.proof.
+
+    format 2, a palette, 8 bits per pixel, transparent index 0,
+    16-bit colour entries.
+    """
+    return FormatProof(format_byte=2, palette=1, bpp=8, transparent=0, entry_size=2)
+
+
 @dataclass(frozen=True)
 class Anchor:
     layer: int
@@ -48,18 +57,11 @@ def parse_format(text: str) -> FormatProof:
         transparent=fields["transparent"],
         entry_size=fields["entry"],
     )
-    if proof.palette != 1:
-        raise ProofError("hard-edge sprites require a palette")
-    if proof.bpp not in (4, 8):
-        raise ProofError("bpp must be 4 or 8")
-    if not 0 <= proof.format_byte <= 255:
-        raise ProofError("format byte is out of range")
-    if not 0 <= proof.transparent <= 255:
-        raise ProofError("transparent index is out of range")
-    if proof.entry_size != 2:
-        raise ProofError("palette entries must be 16-bit colour")
-    if proof.transparent != 0:
-        raise ProofError("transparent index must be 0")
+    if proof != proven_format():
+        raise ProofError(
+            "format proof must be the measured one: format 2, palette 1, "
+            "8 bpp, transparent 0, entry 2"
+        )
     return proof
 
 

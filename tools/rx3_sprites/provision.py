@@ -77,16 +77,12 @@ def provision(
     destination: Path,
     format_text: str,
     anchor_text: str,
-    *,
-    format_is_default: bool = False,
 ) -> str:
     """Compile one source folder and write RX3_SPRITES. No analysis scan."""
     from tools.rx3_sprites.capacity import directory_bytes, report
 
     proof = parse_format(format_text)
     anchors = anchor_text.strip()
-    if format_is_default:
-        log.warning("format proof is the unproven placeholder")
     if anchors:
         parse_anchors(anchors if anchors.endswith("\n") else anchors + "\n")
     else:

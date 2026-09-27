@@ -11,9 +11,8 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from tools.rx3_sprites.fixture import proof_8
 from tools.rx3_sprites.log import configure
-from tools.rx3_sprites.proof import ProofError, parse_format
+from tools.rx3_sprites.proof import ProofError, parse_format, proven_format
 from tools.rx3_sprites.provision import ProvisionError, provision
 from tools.rx3_sprites.source import SourceError, compile_source, load_source
 
@@ -43,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else 2
     configure(_level(args))
     try:
-        format_text, default_format = _format_text(args.format_proof)
+        format_text = _format_text(args.format_proof)
         anchors = "" if args.anchors is None else args.anchors.read_text(encoding="utf-8")
         if args.command == "preview":
             proof = parse_format(format_text)
@@ -55,9 +54,7 @@ def main(argv: list[str] | None = None) -> int:
                 pack.name, pack.width, pack.height, pack.frame_count, mode, len(pack.palette),
             )
             return 0
-        provision(
-            args.source, args.dest, format_text, anchors, format_is_default=default_format,
-        )
+        provision(args.source, args.dest, format_text, anchors)
     except (OSError, SourceError, ProofError, ProvisionError) as error:
         logging.getLogger("rx3.sprites").error("%s", error)
         return 2
@@ -78,10 +75,10 @@ def _level(args: argparse.Namespace) -> int:
     return logging.WARNING
 
 
-def _format_text(path: pathlib.Path | None) -> tuple[str, bool]:
+def _format_text(path: pathlib.Path | None) -> str:
     if path is None:
-        return proof_8().text(), True
-    return path.read_text(encoding="utf-8"), False
+        return proven_format().text()
+    return path.read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

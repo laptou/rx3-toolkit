@@ -167,24 +167,15 @@ def decode(data: bytes) -> Pack:
 
 
 def _frame_bytes(width: int, height: int, bpp: int) -> int:
-    count = width * height
-    if bpp == 8:
-        return count
-    return (count + 1) // 2
+    if bpp != 8:
+        raise PackError("the measured format is 8 bits per pixel")
+    return width * height
 
 
 def _check_indexes(pack: Pack) -> None:
     limit = len(pack.palette) // pack.proof.entry_size
     for frame in pack.frames:
-        if pack.proof.bpp == 8:
-            indexes = frame
-        else:
-            indexes = []
-            for byte in frame:
-                indexes.append(byte >> 4)
-                indexes.append(byte & 0x0F)
-            indexes = indexes[:pack.width * pack.height]
-        if any(index >= limit for index in indexes):
+        if any(index >= limit for index in frame):
             raise PackError("sprite pixel index is outside the palette")
 
 
@@ -199,8 +190,8 @@ def _validate(pack: Pack) -> None:
         raise PackError("unknown sprite anchor")
     if pack.proof.palette != 1 or pack.proof.entry_size != 2 or pack.proof.transparent != 0:
         raise PackError("sprite palette does not match the hard-mask rules")
-    if pack.proof.bpp not in (4, 8):
-        raise PackError("sprite bpp must be 4 or 8")
+    if pack.proof.bpp != 8:
+        raise PackError("the measured format is 8 bits per pixel")
     if len(pack.palette) % 2 or len(pack.palette) < 2:
         raise PackError("sprite palette is incomplete")
     expected = _frame_bytes(pack.width, pack.height, pack.proof.bpp)
