@@ -106,6 +106,7 @@ static void rx3_keyshift_report(void);
 static void rx3_keyshift_start_audio(unsigned int sample_rate);
 static int rx3_keyshift_semitones(unsigned int deck);
 static const uint16_t *rx3_keyshift_label(unsigned int deck);
+static void rx3_keyshift_annotate_sidebar(void *text);
 static void rx3_keyshift_change(unsigned int deck, int delta);
 static void rx3_keyshift_reload(unsigned int deck);
 static void rx3_keyshift_destroy_deck(unsigned int deck);

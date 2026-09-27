@@ -17,6 +17,8 @@
 #ifndef RX3_KEYSHIFT_H
 #define RX3_KEYSHIFT_H
 
+#include "rx3_key_names.h"
+
 static volatile unsigned long pitch_execute_calls[2];
 static volatile unsigned long pitch_last_frames[2];
 /* Diagnostic only. The pitch DSP carries a sequential grain cursor, so it is
@@ -395,6 +397,116 @@ static void rx3_keyshift_destroy_deck(unsigned int deck)
 {
     if (deck < 2u)
         destroy_pitch(&keyshift_decks[deck]);
+}
+
+/* the stock key badge is a short label. deck 1 sits in the upper or left
+   summary; deck 2 is below the midline, or on the right when both stay up. */
+static unsigned rx3_key_deck_for_box(int x1, int y1, int x2, int y2)
+{
+    int mid_x = (x1 + x2) / 2;
+    int mid_y = (y1 + y2) / 2;
+    if (mid_y >= 360)
+        return 1u;
+    if (mid_x >= 640)
+        return 1u;
+    return 0u;
+}
+
+static int rx3_read_key_ascii(const uint16_t *chars, unsigned length,
+                             char *out, int cap)
+{
+    unsigned index;
+    if (!chars || !length || (int)length >= cap)
+        return -1;
+    for (index = 0; index < length; index++) {
+        if (chars[index] < 33u || chars[index] > 126u)
+            return -1;
+        out[index] = (char)chars[index];
+    }
+    out[length] = 0;
+    return (int)length;
+}
+
+static uint16_t key_sidebar_text[2][16];
+static const uint16_t *key_sidebar_stock[2];
+static uint8_t key_sidebar_stock_len[2];
+static int key_sidebar_logged;
+
+static void rx3_keyshift_annotate_sidebar(void *text)
+{
+    uint16_t window_layer;
+    uint16_t x1, y1, x2, y2;
+    uint32_t pointer;
+    uint8_t length;
+    const uint16_t *chars;
+    unsigned deck;
+    char base[8];
+    char pair[16];
+    int pair_len;
+    int steps;
+    int index;
+    int height;
+    int width;
+    if (!keyshift_enabled || !text)
+        return;
+    memcpy(&window_layer, (uint8_t *)text + 0x10u, sizeof(window_layer));
+    if ((window_layer >> 8) == 0x01u)
+        return;
+    memcpy(&x1, (uint8_t *)text + 0x18u, sizeof(x1));
+    memcpy(&y1, (uint8_t *)text + 0x1au, sizeof(y1));
+    memcpy(&x2, (uint8_t *)text + 0x1cu, sizeof(x2));
+    memcpy(&y2, (uint8_t *)text + 0x1eu, sizeof(y2));
+    height = (int)y2 - (int)y1;
+    width = (int)x2 - (int)x1;
+    if (height < 8 || height > 64 || width < 8 || width > 400)
+        return;
+    memcpy(&pointer, (uint8_t *)text + 0x34u, sizeof(pointer));
+    length = ((uint8_t *)text)[0x38u];
+    if (!pointer)
+        return;
+    deck = rx3_key_deck_for_box((int)x1, (int)y1, (int)x2, (int)y2);
+    chars = (const uint16_t *)(unsigned long)pointer;
+    if (chars == key_sidebar_text[deck]) {
+        chars = key_sidebar_stock[deck];
+        length = key_sidebar_stock_len[deck];
+        if (!chars)
+            return;
+    }
+    if (rx3_read_key_ascii(chars, length, base, (int)sizeof(base)) < 0)
+        return;
+    steps = keyshift_decks[deck].semitones % 12;
+    if (steps < 0)
+        steps += 12;
+    pair_len = rx3_key_pair(base, keyshift_decks[deck].semitones, pair,
+                            (int)sizeof(pair));
+    if (pair_len < 0)
+        return;
+    if (!steps) {
+        if ((const uint16_t *)(unsigned long)pointer == key_sidebar_text[deck] &&
+            key_sidebar_stock[deck]) {
+            set_u32(text, 0x34u, (uint32_t)(unsigned long)key_sidebar_stock[deck]);
+            ((uint8_t *)text)[0x38u] = key_sidebar_stock_len[deck];
+        }
+        return;
+    }
+    key_sidebar_stock[deck] = chars;
+    key_sidebar_stock_len[deck] = length;
+    for (index = 0; index < pair_len; index++)
+        key_sidebar_text[deck][index] = (uint16_t)(unsigned char)pair[index];
+    key_sidebar_text[deck][pair_len] = 0;
+    set_u32(text, 0x34u, (uint32_t)(unsigned long)key_sidebar_text[deck]);
+    ((uint8_t *)text)[0x38u] = (uint8_t)pair_len;
+    {
+        int cell = height > 4 ? height * 2 / 3 : 8;
+        int need = pair_len * cell + 4;
+        if (need > width && (int)x1 + need < 1280)
+            set_u16(text, 0x1cu, (uint16_t)((int)x1 + need));
+    }
+    if (!key_sidebar_logged) {
+        key_sidebar_logged = 1;
+        log_number("sidebar key layer = ", window_layer);
+        log_number("sidebar key deck = ", deck + 1u);
+    }
 }
 
 #endif /* RX3_KEYSHIFT_H */

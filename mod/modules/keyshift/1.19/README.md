@@ -8,6 +8,8 @@ Tune each deck up or down by up to twelve semitones, from the **KEY** tab on the
 | **KEY −** / **KEY +** | One semitone down or up |
 | **The number in the middle** | Tap it and that deck goes back to `0` |
 
+The key already printed beside the waveform gains the key you hear. `Am` shifted up two semitones reads `Am Bm`. Camelot and Open Key stay in that notation. At zero the badge is unchanged.
+
 On by default. Nothing is written to the player: power off, pull the stick, and it is gone.
 
 ## What it actually sounds like

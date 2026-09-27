@@ -7,6 +7,7 @@ import json
 
 
 ROOT = Path(__file__).resolve().parent
+HOOK = (ROOT.parents[1] / "core/1.19/rx3_core_hook.c").read_text()
 KEYSHIFT = (ROOT / "rx3_keyshift.h").read_text()
 DECL = (ROOT / "rx3_keyshift_decl.h").read_text()
 SHIFTER = (ROOT / "rx3_pitch_shift.h").read_text()
@@ -41,6 +42,12 @@ require(
     and "stems" not in FEATURE.lower()
     and "rx3_keyshift_change" in PANEL,
     "key shift must implement only its own lifecycle and panel contracts",
+)
+require(
+    "rx3_keyshift_annotate_sidebar" in KEYSHIFT
+    and "rx3_keyshift_annotate_sidebar(text)" in HOOK
+    and "rx3_key_pair" in (ROOT / "rx3_key_names.h").read_text(),
+    "the sidebar key must show the analysed key and the heard key",
 )
 
 # -- where the pitch stage sits ------------------------------------------------
