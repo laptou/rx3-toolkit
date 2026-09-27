@@ -49,3 +49,12 @@ If you omit `--patch`, the build includes every default module. If you pass `--p
 A missing `--key` or `--output` exits with status 2. On success the command prints the file path, the byte size, and the SHA-256.
 
 `make autoexec KEY=KEY MODULES="sprites logging"` runs this same build. The output directory is `build/`.
+
+## Crash reports
+
+```sh
+python -m tools.rx3_crash REPORT --autoexec STICK/autoexec.bin --key KEY
+python -m tools.rx3_crash REPORT --hook build/librx3_core.so
+```
+
+`REPORT` is a `RX3_RUNTIME/crash-NNNN.txt` file that the `logging` module writes. The command prints each crash in it: the signal, `pc` and `lr`, the registers, and the code addresses on the stack. It gives an address in the performance core as a function and a source line. That needs `llvm-symbolizer`, either on `PATH` or from Homebrew `llvm`. `--autoexec` reads the core from the stick image, so its symbols match the code that crashed. It prints an address in rbp without a name.
