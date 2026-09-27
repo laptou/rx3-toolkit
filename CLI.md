@@ -58,3 +58,13 @@ python -m tools.rx3_crash REPORT --hook build/librx3_core.so
 ```
 
 `REPORT` is a `RX3_RUNTIME/crash-NNNN.txt` file that the `logging` module writes. The command prints each crash in it: the signal, `pc` and `lr`, the registers, and the code addresses on the stack. It gives an address in the performance core as a function and a source line. That needs `llvm-symbolizer`, either on `PATH` or from Homebrew `llvm`. `--autoexec` reads the core from the stick image, so its symbols match the code that crashed. It prints an address in rbp without a name.
+
+## Ghidra
+
+```sh
+python -m tools.rx3_ghidra --rbp STICK/RX3_RUNTIME/rbp-SHA1.rbp 0x1d3284 str:wave
+```
+
+With the `logging` module on, the player copies its stock `rbp` to `RX3_RUNTIME/rbp-<sha1>.rbp` once. The guarded words are put back first, and the copy is kept only if its SHA-1 is the accepted stock hash. This command runs headless Ghidra on that file and writes one C file per function to `local/ghidra/decompiled/`. Each file starts with the function's callers and callees. A target is an address (`0x...`, the function that contains it), a function name, or `str:TEXT` (each function that references a string containing `TEXT`). rbp addresses are the same numbers that the hook constants use.
+
+The first run imports and analyses the binary. That takes some minutes. Later runs reuse `local/ghidra/project/` and only decompile. Ghidra comes from `--ghidra DIR`, from `GHIDRA_INSTALL_DIR`, or from Homebrew (`brew install ghidra`). Git ignores `local/`. Do not commit the binary or the output.
