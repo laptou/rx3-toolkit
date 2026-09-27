@@ -42,10 +42,10 @@ require(
     "#define BEAT_FX_SPIRAL 7" in FEATURE
     and "#define BEAT_FX_UI_SPIRAL 3" in FEATURE
     and "#define BEAT_FX_DISPLAY_SPIRAL 5" in FEATURE
-    and "*(const int *)(manager + 0x4cu) == BEAT_FX_SPIRAL" in FEATURE
-    and "*(const int *)(manager + 0x50u) == BEAT_FX_SPIRAL" in FEATURE,
-    "spiral is engine type 7, ui type 3 and display type 5; only a settled "
-    "spiral is replaced, so a switch keeps rbp's crossfade",
+    and "rx3_beat_fx_owned(fields, BEAT_FX_SPIRAL)" in FEATURE
+    and "rx3_beat_fx_on(fields, BEAT_FX_SPIRAL)" in FEATURE,
+    "spiral is engine type 7, ui type 3 and display type 5; the broker's "
+    "ownership rule decides when stock is skipped and when it swings",
 )
 require(
     "SPIRAL_CAPTION_FIRST 0x1465u" in FEATURE
@@ -71,9 +71,10 @@ require(
     "TIME stays stock while it is the beat fx bpm adjust",
 )
 require(
-    "(fields + 0xe8u)" in FEATURE and "(effect + 0x3cu)" in FEATURE,
+    "(fields + 0xe8u)" in FEATURE and "(effect + 0x3cu)" not in FEATURE,
     "DEPTH is the manager's pending value, because the skipped "
-    "operateBeatEffect is what copies it onto the effect; ON is the effect's",
+    "operateBeatEffect is what copies it onto the effect; ON is the "
+    "requested type, not the effect's flag",
 )
 require(
     "#define SW_RING 65536u" in DSP,

@@ -68,17 +68,18 @@ require(
 require(
     "#define BEAT_FX_HELIX 14" in FEATURE
     and "#define BEAT_FX_UI_HELIX 4" in FEATURE
-    and "*(const int *)(manager + 0x4cu) == BEAT_FX_HELIX" in FEATURE
-    and "*(const int *)(manager + 0x50u) == BEAT_FX_HELIX" in FEATURE,
-    "helix is engine type 14 and ui type 4; only a settled helix is replaced, "
-    "so a switch to or from it keeps rbp's crossfade",
+    and "rx3_beat_fx_owned((const uint8_t *)manager, BEAT_FX_HELIX)" in FEATURE
+    and "rx3_beat_fx_on(manager, BEAT_FX_HELIX)" in FEATURE,
+    "helix is engine type 14 and ui type 4; the broker's ownership rule "
+    "decides when stock is skipped and when the sidechain is on",
 )
 require(
     "(manager + 0xe8u)" in FEATURE and "(effect + 0x24u)" in FEATURE
-    and "(effect + 0x3cu)" in FEATURE,
+    and "(effect + 0x3cu)" not in FEATURE,
     "DEPTH comes from the manager's pending value, because the skipped "
-    "operateBeatEffect is what copies it onto the effect; TIME and ON are "
-    "the effect's own",
+    "operateBeatEffect is what copies it onto the effect; TIME is the "
+    "effect's own. ON is the requested type: stock's tail toggles the "
+    "effect's own flag, so it goes stale while stock is skipped",
 )
 require(
     "color_fx" not in FEATURE.lower() and "COLOR_FX" not in FEATURE,

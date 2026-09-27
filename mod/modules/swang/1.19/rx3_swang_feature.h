@@ -12,7 +12,9 @@
  *     1/2 beat (8ths) or 1 beat (quarters). the screen shows that beat.
  *   TIME shifts the swing against the grid, in 32 steps per pair of notes.
  *     the screen shows the shift in ms.
- *   ON (effect +0x3c) swings; off, the warp glides back to straight.
+ *   ON swings; OFF glides the warp back to straight. rbp's ON and OFF are
+ *     the requested type (+0x50) turning spiral or 0, and SWANG owns the
+ *     block across both (the broker's rx3_beat_fx_owned).
  * the grid is the tempo MASTER deck's (PlayEngine +0x5c SyncMaster: +0x8
  * the deck, or +0x20 while +0x1c overrides; -1 is none). with no master it
  * is the beat fx channel's deck, and with neither the audio stays straight.
@@ -62,13 +64,6 @@ static struct sw_clock sw_clock = { -1, 0.0, 0, 0.0f };
 static float sw_swing = SW_STRAIGHT;
 static int sw_settled;
 static int sw_logged;
-
-static int sw_spiral_settled(const uint8_t *manager)
-{
-    return *(const int *)(manager + 0x4cu) == BEAT_FX_SPIRAL &&
-           *(const int *)(manager + 0x50u) == BEAT_FX_SPIRAL &&
-           *(const int *)manager == *(const int *)(manager + 0x04u);
-}
 
 static int sw_master_deck(void)
 {
@@ -139,7 +134,6 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
                                          int frames)
 {
     const uint8_t *fields = (const uint8_t *)manager;
-    const uint8_t *effect;
     unsigned note = sw_note;
     float pair_beats = 2.0f * sw_note_beats[note < SW_NOTE_COUNT ? note : 0u];
     float swing = SW_STRAIGHT;
@@ -151,7 +145,7 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
     float step;
     int deck;
     unsigned channel;
-    if (!sw_spiral_settled(fields)) {
+    if (!rx3_beat_fx_owned(fields, BEAT_FX_SPIRAL)) {
         sw_settled = 0;
         return 0;
     }
@@ -165,7 +159,6 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
             log_line("swang: SPIRAL is now SWANG");
         }
     }
-    effect = *(const uint8_t *const *)(fields + 0x08u);
     channel = *(const uint32_t *)fields;
     deck = sw_master_deck();
     if (deck < 0 && channel < 2u)
@@ -176,7 +169,7 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
         pair_at = sw_fraction(pairs);
         pair_step = step / pair_beats;
         pair_frames = pair_beats / step;
-        if (effect && *(const uint8_t *)(effect + 0x3cu))
+        if (rx3_beat_fx_on(fields, BEAT_FX_SPIRAL))
             swing = sw_swing_for(*(const float *)(fields + 0xe8u));
     }
     if (glide > 1.0f)

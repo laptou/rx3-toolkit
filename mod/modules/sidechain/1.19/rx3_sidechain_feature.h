@@ -7,13 +7,13 @@
  * it is ON, the beat fx channel (CH1 or CH2) is the trigger and the other
  * deck is ducked by its level.
  *
- * the stock helix never runs: operateBeatEffect returns at once while helix
- * is the settled effect, so the trigger channel plays dry. the controls are
- * read from the BeatEffectManager (MixerChannel +0x218):
+ * the stock helix never runs: from ON through OFF the broker's
+ * rx3_beat_fx_owned holds, operateBeatEffect returns at once, and the
+ * trigger channel plays dry. ON is the requested type being helix, 14; OFF
+ * requests type 0. the controls are read from the BeatEffectManager
+ * (MixerChannel +0x218):
  *   +0x00 beat fx channel (0 CH1, 1 CH2, others are mic, master, aux)
- *   +0x04 the channel it is switching to
- *   +0x08 active effect: +0x24 TIME in ms, +0x3c ON
- *   +0x4c / +0x50 committed / requested type, 14 is helix
+ *   +0x08 active effect: +0x24 TIME in ms
  *   +0xe8 DEPTH 0..1, as the dial left it; operateBeatEffect is what copies
  *         it onto the effect, and it no longer runs
  * the BEAT arrows step the ratio: MasterInnards::onEv_BeatFxBeat(this,
@@ -73,13 +73,6 @@ static struct sc_deck sc_decks[2] = { { -40.0f, 1.0f }, { -40.0f, 1.0f } };
 static volatile unsigned sc_ratio_index = SC_RATIO_DEFAULT;
 static int sc_logged;
 
-static int sc_helix_settled(const uint8_t *manager)
-{
-    return *(const int *)(manager + 0x4cu) == BEAT_FX_HELIX &&
-           *(const int *)(manager + 0x50u) == BEAT_FX_HELIX &&
-           *(const int *)manager == *(const int *)(manager + 0x04u);
-}
-
 static float sc_block_peak_l2(const Float2 *buf, int frames)
 {
     float peak = 0.0f;
@@ -134,8 +127,7 @@ static void sidechain_feature_channel_block(unsigned int deck, void *channel,
     self->level_l2 = sc_block_peak_l2(output, frames);
     effect = manager ? *(const uint8_t *const *)(manager + 0x08u) : 0;
     trigger = manager ? *(const uint32_t *)manager : 2u;
-    if (!effect || trigger >= 2u || !sc_helix_settled(manager) ||
-        !*(const uint8_t *)(effect + 0x3cu)) {
+    if (!effect || trigger >= 2u || !rx3_beat_fx_on(manager, BEAT_FX_HELIX)) {
         sc_apply_gain(self, 1.0f, 50.0f, output, frames);
         return;
     }
@@ -158,14 +150,14 @@ static void sidechain_feature_channel_block(unsigned int deck, void *channel,
     sc_meter_note_cut(self->gain);
 }
 
-/* helix stays dry: its wet path is skipped while it is the settled effect.
+/* helix stays dry: its wet path is skipped while sidechain owns the block.
    a switch to or from helix still runs stock, so rbp's crossfade happens. */
 static int sidechain_feature_beat_fx_operate(void *manager, Float2 *buffer,
                                              int frames)
 {
     (void)buffer;
     (void)frames;
-    return sc_helix_settled((const uint8_t *)manager);
+    return rx3_beat_fx_owned((const uint8_t *)manager, BEAT_FX_HELIX);
 }
 
 /* the BEAT arrows pick the ratio while helix is the selected beat fx. */
