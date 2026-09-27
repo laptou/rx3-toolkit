@@ -10,5 +10,6 @@ Start from the [main README](../README.md) for installation and usage.
 | [Getting a root filesystem](extract-initramfs.md) | Getting a rootfs out of the published GPL sources |
 | [Provenance](provenance.md) | Upstream commit this tree is based on |
 | [Animated sprites](sprites.md) | Pack format, live beat clock, and USB layout |
+| [Command line](../CLI.md) | Sprite packs and `autoexec.bin` |
 | [Hardware validation](hardware-validation.md) | Checks to run on a firmware 1.19 player |
 | [Legal position](../LEGAL.md) | Purpose, what is not distributed, and how to raise a complaint |

@@ -398,6 +398,7 @@ Want one of these sooner? Or something else? Say so in an issue, or build it you
 | [Troubleshooting](docs/troubleshooting.md) | Symptoms, errors, fixes |
 | [Reference](REFERENCES.md) | How it all works: the platform, patching, the display, stems, the build, everything |
 | [Animated sprites](docs/sprites.md) | How to author a pack and what the player accepts |
+| [Command line](CLI.md) | Sprite packs and `autoexec.bin` |
 | [Hardware validation](docs/hardware-validation.md) | What to check on a firmware 1.19 player before trusting an overlay |
 | [Contributing](CONTRIBUTING.md) | Build from source, run the tests, write a module |
 | [Legal position](LEGAL.md) | What this project does, what it does not distribute, and on what basis |
