@@ -63,14 +63,28 @@ require(
     and "(int)x2 - (int)x1 < SPRITE_WAVE_MIN_H" in FEATURE
     and "sprite_pick_state" in FEATURE
     and "sprite waiting for a track" in FEATURE
-    and "RX3_SPRITE_STATUS_PATH" in FEATURE
-    and "learning the waveform from the screen" in FEATURE,
+    and "RX3_SPRITE_STATUS_PATH" in FEATURE,
     "a loaded track on either deck must draw, and the strip can be shorter than the frame",
+)
+require(
+    "sprite_consider" not in FEATURE
+    and "sprite_hold" not in FEATURE
+    and "file_deck = sprite_file_deck(window_layer, image_id);\n    if (file_deck < 0)\n        return;"
+    in FEATURE,
+    "the sprite must draw only on the anchor image's own draw; a box learned "
+    "from the screen put it on the browse page",
+)
+require(
+    "record[0x18u] = 1u; /* rgb565, as the custom tabs */" in FEATURE
+    and "record[0x19u] = 0u;" in FEATURE
+    and "sprite_expand(job, &expanded_bytes)" in FEATURE,
+    "record format 2 reads index bytes as rgb565 pixels; the player must "
+    "expand packs to the tab format",
 )
 require(
     "values[2] != 8u" in FEATURE
     and "format 2, palette, 8 bpp" in FEATURE,
-    "the player must accept only the measured 8-bit hard-mask",
+    "the player must accept only the 8-bit indexed pack encoding",
 )
 require(
     "sprites disabled: hard-mask format is not proven" in FEATURE

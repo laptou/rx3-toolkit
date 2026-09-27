@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: MPL-2.0
  * usb sprite overlays for firmware 1.19.
- * draws only through pal_draw_image, and only after a proven hard-mask format
- * and waveform anchor. anything unproven leaves the stock image untouched.
+ * draws only through pal_draw_image, right after rbp draws a proven anchor
+ * image. packs are 8-bit indexed; the player expands each frame to the same
+ * rgb565 record the custom tabs use, because record format 2 is direct rgb565
+ * and reads the index bytes as pixels. index 0 is black until a format with a
+ * mask is proven. anything unproven leaves the stock image untouched.
  */
 
 #ifndef RX3_SPRITES_FEATURE_H
@@ -74,7 +77,7 @@ struct sprite_job {
     unsigned frames_per_beat;
     unsigned beats_per_loop;
     unsigned anchor;
-    unsigned format_byte;
+    unsigned palette_count;
     unsigned id0;
     unsigned pixel_bytes;
     uint8_t *palette;
@@ -281,8 +284,8 @@ static int sprite_parse_format(const char *text, size_t length,
     }
     if (count != 5u || cursor != length)
         return -1;
-    /* firmware 1.19 hard-mask, copied from a passing format.proof:
-       format 2, palette, 8 bpp, transparent index 0, 16-bit entries. */
+    /* the pack encoding: format 2, palette, 8 bpp, transparent index 0,
+       16-bit rgb565 entries. the player expands it, see sprite_install_job. */
     if (values[0] != 2u || values[1] != 1u || values[2] != 8u ||
         values[3] != 0u || values[4] != 2u)
         return -1;
@@ -429,7 +432,7 @@ static int sprite_load_proofs(void)
     }
     munmap(block, size);
     if (sprite_join(path, sizeof(path), "anchors.proof")) {
-        log_line("sprite format ok; learning the waveform from the screen");
+        sprite_log_once(4u, "sprites disabled: waveform anchor is not proven");
         return 0;
     }
     block = sprite_slurp(path, &size, 2048u);
@@ -438,7 +441,6 @@ static int sprite_load_proofs(void)
             munmap(block, size);
         sprite_anchors_ok = 0;
         sprite_log_once(4u, "sprites disabled: waveform anchor is not proven");
-        log_line("sprite format ok; learning the waveform from the screen");
         return 0;
     }
     munmap(block, size);
@@ -581,7 +583,7 @@ static void *sprite_loader(void *opaque)
     job->frames_per_beat = header->frames_per_beat;
     job->beats_per_loop = header->beats_per_loop;
     job->anchor = header->anchor;
-    job->format_byte = header->format_byte;
+    job->palette_count = header->palette_count;
     job->pixel_bytes = (unsigned)frame_bytes;
     job->block = pack;
     job->block_bytes = pack_size;
@@ -603,11 +605,42 @@ done:
     return 0;
 }
 
+/* expand the indexed frames of a pack into rgb565, one frame after another.
+   an index past the palette is drawn as index 0. */
+static uint16_t *sprite_expand(const struct sprite_job *job, size_t *bytes_out)
+{
+    size_t pixels_per_frame = (size_t)job->width * job->height;
+    size_t count = pixels_per_frame * job->frame_count;
+    size_t bytes = (count * 2u + 4095u) & ~(size_t)4095u;
+    uint16_t *output;
+    unsigned frame;
+    size_t offset;
+    output = mmap(0, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                  -1, 0);
+    if (output == MAP_FAILED)
+        return 0;
+    for (frame = 0; frame < job->frame_count; frame++) {
+        const uint8_t *source = job->pixels + (size_t)frame * job->pixel_bytes;
+        uint16_t *target = output + (size_t)frame * pixels_per_frame;
+        for (offset = 0; offset < pixels_per_frame; offset++) {
+            unsigned colour_index = source[offset];
+            uint16_t colour = 0u;
+            if (colour_index && colour_index < job->palette_count)
+                memcpy(&colour, job->palette + colour_index * 2u, sizeof(colour));
+            target[offset] = colour;
+        }
+    }
+    *bytes_out = bytes;
+    return output;
+}
+
 static int sprite_install_job(struct sprite_job *job)
 {
     uint8_t *table;
     unsigned frame;
     unsigned long available;
+    uint16_t *expanded;
+    size_t expanded_bytes = 0;
     if (!tab_assets_ready)
         return -1;
     if (sprite_next_id + job->frame_count > SPRITE_ID_FIRST + SPRITE_ID_COUNT)
@@ -618,26 +651,31 @@ static int sprite_install_job(struct sprite_job *job)
     table = *(uint8_t **)IMAGE_TABLE_POINTER;
     if (!table)
         return -1;
-    if (sprite_keep(job->block, job->block_bytes))
+    expanded = sprite_expand(job, &expanded_bytes);
+    if (!expanded)
         return -1;
+    if (sprite_keep(expanded, expanded_bytes)) {
+        munmap(expanded, expanded_bytes);
+        return -1;
+    }
+    munmap(job->block, job->block_bytes);
     job->block = 0;
     job->id0 = sprite_next_id;
     for (frame = 0; frame < job->frame_count; frame++) {
         uint8_t *record = table + (job->id0 + frame) * 44u;
         uint16_t width = (uint16_t)job->width;
         uint16_t height = (uint16_t)job->height;
-        uint8_t *pixels = job->pixels + frame * job->pixel_bytes;
+        uint16_t *pixels = expanded + (size_t)frame * job->width * job->height;
         uint32_t pixel_off = (uint32_t)(unsigned long)pixels -
                              (uint32_t)(unsigned long)table;
-        uint32_t palette_off = (uint32_t)(unsigned long)job->palette -
-                               (uint32_t)(unsigned long)table;
+        uint32_t no_palette = 0u;
         memcpy(record, table + 0x1598u * 44u, 44u);
         memcpy(record + 4u, &width, sizeof(width));
         memcpy(record + 6u, &height, sizeof(height));
-        record[0x18u] = (uint8_t)job->format_byte;
-        record[0x19u] = 1u;
+        record[0x18u] = 1u; /* rgb565, as the custom tabs */
+        record[0x19u] = 0u;
         memcpy(record + 0x20u, &pixel_off, sizeof(pixel_off));
-        memcpy(record + 0x24u, &palette_off, sizeof(palette_off));
+        memcpy(record + 0x24u, &no_palette, sizeof(no_palette));
     }
     sprite_next_id = job->id0 + job->frame_count;
     return 0;
@@ -953,71 +991,6 @@ static struct sprite_deck *sprite_pick_state(unsigned preferred)
     return 0;
 }
 
-struct sprite_hold {
-    int ready;
-    int force;
-    uint16_t layer;
-    uint32_t image_id;
-    uint16_t x1, y1, x2, y2;
-    unsigned area;
-    uint32_t painted_ms;
-    uint8_t model[0x54];
-};
-
-static struct sprite_hold sprite_holds[2];
-
-static void sprite_hold_arm(unsigned deck, const void *image, uint16_t layer,
-                           uint32_t image_id, uint16_t x1, uint16_t y1,
-                           uint16_t x2, uint16_t y2)
-{
-    struct sprite_hold *hold;
-    if (deck > 1u)
-        return;
-    hold = &sprite_holds[deck];
-    if (!hold->ready)
-        sprite_note(deck ? 8u : 4u,
-                    deck ? "sprite learned deck 1" : "sprite learned deck 0");
-    memcpy(hold->model, image, sizeof(hold->model));
-    hold->ready = 1;
-    hold->force = 1;
-    hold->layer = layer;
-    hold->image_id = image_id;
-    hold->x1 = x1;
-    hold->y1 = y1;
-    hold->x2 = x2;
-    hold->y2 = y2;
-}
-
-/* keep the largest waveform-sized box in each stable corner. */
-static void sprite_consider(const void *image, uint16_t layer, uint32_t image_id,
-                           uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
-{
-    int span_x = (int)x2 - (int)x1;
-    int span_y = (int)y2 - (int)y1;
-    unsigned corner;
-    unsigned deck;
-    unsigned area;
-    if (image_id == 0u || image_id == 0xffffffffu)
-        return;
-    if (span_x < SPRITE_WAVE_MIN_W || span_y < SPRITE_WAVE_MIN_H)
-        return;
-    corner = sprite_trace_corner(x1, y1, x2, y2);
-    if (corner == 0u)
-        deck = 0u;
-    else if (corner == 3u)
-        deck = 1u;
-    else
-        return;
-    area = (unsigned)span_x * (unsigned)span_y;
-    if (sprite_holds[deck].ready && area <= sprite_holds[deck].area &&
-        sprite_holds[deck].image_id == image_id)
-        return;
-    if (sprite_holds[deck].ready && area < sprite_holds[deck].area)
-        return;
-    sprite_holds[deck].area = area;
-    sprite_hold_arm(deck, image, layer, image_id, x1, y1, x2, y2);
-}
-
 static int sprite_file_deck(uint16_t layer, uint32_t image_id)
 {
     unsigned index;
@@ -1086,9 +1059,7 @@ static void sprites_feature_after_image(void *render, void *image,
                                         uint32_t image_id)
 {
     uint16_t x1, y1, x2, y2;
-    unsigned deck;
     int file_deck;
-    uint32_t now;
     sprite_take_jobs();
     memcpy(&x1, (const uint8_t *)image + 0x18u, sizeof(x1));
     memcpy(&y1, (const uint8_t *)image + 0x1au, sizeof(y1));
@@ -1100,28 +1071,14 @@ static void sprites_feature_after_image(void *render, void *image,
         sprite_draw_probe(render, image, x1, y1, x2, y2);
     if (!sprite_format.ok)
         return;
-    sprite_consider(image, window_layer, image_id, x1, y1, x2, y2);
+    /* the sprite rides on the anchor draw itself. drawing it after any other
+       image put it on whatever page was on screen. */
     file_deck = sprite_file_deck(window_layer, image_id);
-    if (file_deck >= 0) {
-        struct sprite_hold *hold = &sprite_holds[file_deck];
-        unsigned area = (unsigned)((int)x2 - (int)x1) * (unsigned)((int)y2 - (int)y1);
-        /* a larger waveform learned from the screen wins over the file. */
-        if (!hold->ready || hold->image_id == image_id || area >= hold->area)
-            sprite_hold_arm((unsigned)file_deck, image, window_layer, image_id,
-                            x1, y1, x2, y2);
-    }
-    now = now_ms();
-    for (deck = 0; deck < 2u; deck++) {
-        struct sprite_hold *hold = &sprite_holds[deck];
-        if (!hold->ready)
-            continue;
-        if (!hold->force && now - hold->painted_ms < 40u)
-            continue;
-        hold->force = 0;
-        hold->painted_ms = now;
-        sprite_paint(render, hold->model, deck, hold->x1, hold->y1, hold->x2,
-                     hold->y2);
-    }
+    if (file_deck < 0)
+        return;
+    sprite_note(file_deck ? 8u : 4u,
+                file_deck ? "sprite anchor drawn deck 1" : "sprite anchor drawn deck 0");
+    sprite_paint(render, (const uint8_t *)image, (unsigned)file_deck, x1, y1, x2, y2);
 }
 
 static void sprites_feature_playhead(unsigned int deck, long position)
