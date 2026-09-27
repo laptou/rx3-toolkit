@@ -12,6 +12,10 @@
  *   SetBeatFxInfo(), ui thread: fills the beat fx block of the play screen
  *     (buf_PlayGroup +0x1e0) that the ui copies and draws.
  * each hook is installed only when an active feature listens to it.
+ *
+ * while SetBeatFxInfo is hooked, the ui thread also logs every change of the
+ * manager's selection and fade state, so a feature that misreads it shows up
+ * in the core log.
  */
 
 #ifndef RX3_BEATFX_BROKER_H
@@ -52,11 +56,15 @@ static operate_beat_effect_fn original_operate_beat_effect;
 static beat_fx_beat_event_fn original_beat_fx_beat_event;
 static beat_fx_beat_event_fn original_beat_fx_time_event;
 static set_beat_fx_info_fn original_set_beat_fx_info;
+/* the manager operateBeatEffect last ran on, for the ui thread's probe. */
+static void *volatile beat_fx_manager_seen;
+static uint32_t beat_fx_probe_last[10];
 
 static void hooked_operate_beat_effect(void *manager, Float2 *buffer,
                                        int frames, int preview)
 {
     unsigned int index;
+    beat_fx_manager_seen = manager;
     if (manager && buffer && frames > 0)
         for (index = 0; index < RUNTIME_FEATURE_COUNT; index++)
             if (runtime_features[index].active &&
@@ -89,6 +97,65 @@ static int hooked_beat_fx_time_event(void *innards, long delta)
     return original_beat_fx_time_event(innards, delta);
 }
 
+static size_t beat_fx_probe_hex(char *out, const char *label, uint32_t value)
+{
+    size_t n = 0;
+    int shift;
+    int started = 0;
+    while (label[n]) {
+        out[n] = label[n];
+        n++;
+    }
+    for (shift = 28; shift >= 0; shift -= 4) {
+        unsigned digit = (value >> shift) & 0xfu;
+        if (digit || shift == 0)
+            started = 1;
+        if (started)
+            out[n++] = (char)(digit < 10u ? '0' + digit : 'a' + digit - 10u);
+    }
+    return n;
+}
+
+/* the manager's channel, effect, type and fade fields and the effect's ON,
+   logged when any of them changes. */
+static void beat_fx_probe(void)
+{
+    static const char *const labels[10] = {
+        "beatfx: ch=", " next_ch=", " effect=", " type=", " next_type=",
+        " fade=", " done=", " effect_on=", " display=", " label=",
+    };
+    const uint8_t *manager = (const uint8_t *)beat_fx_manager_seen;
+    const uint8_t *effect;
+    uint32_t now[10];
+    char line[192];
+    size_t n = 0;
+    unsigned index;
+    if (!manager)
+        return;
+    effect = *(const uint8_t *const volatile *)(manager + 0x08u);
+    now[0] = *(const volatile uint32_t *)manager;
+    now[1] = *(const volatile uint32_t *)(manager + 0x04u);
+    now[2] = (uint32_t)(unsigned long)effect;
+    now[3] = *(const volatile uint32_t *)(manager + 0x4cu);
+    now[4] = *(const volatile uint32_t *)(manager + 0x50u);
+    now[5] = *(const volatile uint32_t *)(manager + 0x88u);
+    now[6] = *(const volatile uint8_t *)(manager + 0xefu);
+    now[7] = effect ? *(const volatile uint8_t *)(effect + 0x3cu) : 0xffu;
+    now[8] = *(const uint32_t *)BEAT_FX_INFO_BLOCK;
+    now[9] = *(const uint32_t *)(BEAT_FX_INFO_BLOCK + 0x10u);
+    for (index = 0; index < 10u && now[index] == beat_fx_probe_last[index];
+         index++)
+        ;
+    if (index == 10u)
+        return;
+    for (index = 0; index < 10u; index++) {
+        beat_fx_probe_last[index] = now[index];
+        n += beat_fx_probe_hex(line + n, labels[index], now[index]);
+    }
+    line[n] = '\0';
+    log_line(line);
+}
+
 static void hooked_set_beat_fx_info(void)
 {
     unsigned int index;
@@ -97,6 +164,7 @@ static void hooked_set_beat_fx_info(void)
         if (runtime_features[index].active &&
             runtime_features[index].beat_fx_info)
             runtime_features[index].beat_fx_info(BEAT_FX_INFO_BLOCK);
+    beat_fx_probe();
 }
 
 /* ui thread: the id a feature wants drawn in place of image_id. */
