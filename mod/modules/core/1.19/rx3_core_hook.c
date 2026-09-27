@@ -363,6 +363,9 @@ static void sprites_feature_after_image(void *render, void *image,
 static int sidechain_feature_configured(void);
 static int sidechain_feature_install(void);
 static void sidechain_feature_remove(void);
+static void sidechain_feature_after_image(void *render, void *image,
+                                          uint16_t window_layer,
+                                          uint32_t image_id);
 static void rx3_notify_playhead(unsigned int deck, long position);
 static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
@@ -393,7 +396,8 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
         "sidechain", 0, 0,
         sidechain_feature_configured, sidechain_feature_install,
-        sidechain_feature_remove, 0, 0, 0, 0, 0, 0, 0
+        sidechain_feature_remove, 0, 0, 0, 0, 0, 0,
+        sidechain_feature_after_image
     }
 };
 

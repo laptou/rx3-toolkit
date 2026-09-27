@@ -38,7 +38,8 @@
     }
   ],
   "build_files": [
-    "rx3_feature_api.h"
+    "rx3_feature_api.h",
+    "rx3_ds_gr.h"
   ],
   "arm_hook": {
     "source": "rx3_core_hook.c",

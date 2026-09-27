@@ -18,7 +18,9 @@
 #ifndef RX3_SIDECHAIN_FEATURE_H
 #define RX3_SIDECHAIN_FEATURE_H
 
+#include "../../core/1.19/rx3_ds_gr.h"
 #include "rx3_sidechain_dsp.h"
+#include "rx3_sidechain_meter.h"
 
 #define COLOR_FX_OPERATE ((unsigned long)0x000bbc68)
 #define COLOR_FX_DUB_ECHO 4
@@ -117,6 +119,10 @@ static void sc_process(unsigned input, const uint8_t *effect, Float2 *buf,
                      sc_block_keep(target < start ? sc_attack_ms(release)
                                                   : release,
                                    frames);
+    if (role.role == SC_ROLE_SOURCE)
+        sc_meter_note_source(self->level_l2, role.threshold_l2);
+    else if (role.role == SC_ROLE_COMPRESSED)
+        sc_meter_note_cut(self->gain);
     if (start == 1.0f && self->gain == 1.0f)
         return;
     /* ramp across the block so a gain change never clicks. */
@@ -149,6 +155,7 @@ static void hooked_color_fx_operate(void *manager, Float2 *buf, int frames)
         sc_logged = 1;
         log_line("sidechain: DUB ECHO is now the sidechain compressor");
     }
+    sc_meter_note_block();
     sc_process(input, effect, buf, frames);
 }
 
@@ -166,9 +173,22 @@ static int sidechain_feature_install(void)
     return original_color_fx_operate != 0;
 }
 
+/* driven from rbp's image draws, which run on its ui thread. */
+static void sidechain_feature_after_image(void *render, void *image,
+                                          uint16_t window_layer,
+                                          uint32_t image_id)
+{
+    (void)render;
+    (void)image;
+    (void)window_layer;
+    (void)image_id;
+    sc_meter_tick();
+}
+
 static void sidechain_feature_remove(void)
 {
     uninstall_hook(&color_fx_operate_hook);
+    rx3_gr_close(&sc_meter_window);
     original_color_fx_operate = 0;
 }
 
