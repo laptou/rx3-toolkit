@@ -301,13 +301,79 @@ static int sprite_header_ok(struct rx3_sprite_file_header *header, size_t size)
 }
 
 
-/* the player beat clock is not wired until a firmware-1.19 log proves the field.
- * do not guess an address. a failed read leaves beat-mode packs undrawn. */
-static int sprite_read_beat_phase(unsigned deck, uint32_t *phase_milli)
+/* the deck's beat grid, as rbp's quantize code reads it:
+ *   PcmReader +4 ReaderImpl, ReaderImpl +0x69c BeatPosition (ReaderOwner::getBeatPos)
+ *   BeatPosition +0x24 count, +0x28 grid offset (ms), +0x34/+0x38 beat vector
+ *   each beat is 8 bytes: +0 beat in bar (1-4), +2 bpm x100, +4 time (ms)
+ * plain loads only. quantize helpers lock and write scratch fields. a track
+ * load swaps in a new ReaderImpl, so the pointers are checked again at the
+ * end. position is the timestretch playhead in 44.1 khz track samples. the
+ * count is shifted so bar downbeats land on multiples of 4. */
+static int sprite_read_beat_phase(unsigned deck, long position,
+                                  uint32_t *phase_milli)
 {
-    (void)deck;
-    (void)phase_milli;
-    return -1;
+    const uint8_t *reader = (const uint8_t *)deck_readers[deck];
+    const uint8_t *impl;
+    const uint8_t *grid;
+    const uint8_t *beats;
+    const uint8_t *end;
+    uint32_t count;
+    uint32_t low = 0;
+    uint32_t high;
+    uint32_t index;
+    int32_t offset;
+    int32_t target;
+    int32_t time_at;
+    int32_t width;
+    uint16_t number;
+    double beat;
+    if (!reader || position < 0)
+        return -1;
+    impl = *(const uint8_t *const volatile *)(reader + 4u);
+    if (!impl)
+        return -1;
+    grid = *(const uint8_t *const volatile *)(impl + 0x69cu);
+    if (!grid)
+        return -1;
+    count = *(const volatile uint32_t *)(grid + 0x24u);
+    offset = *(const volatile int32_t *)(grid + 0x28u);
+    beats = *(const uint8_t *const volatile *)(grid + 0x34u);
+    end = *(const uint8_t *const volatile *)(grid + 0x38u);
+    if (!count || count > 0x100000u || !beats || end != beats + count * 8u)
+        return -1;
+    target = (int32_t)((double)position / 44.1) - offset;
+    /* first beat after the target, then step back one. */
+    high = count;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (*(const int32_t *)(beats + middle * 8u + 4u) <= target)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    index = low ? low - 1u : 0u;
+    time_at = *(const int32_t *)(beats + index * 8u + 4u);
+    if (index + 1u < count) {
+        width = *(const int32_t *)(beats + (index + 1u) * 8u + 4u) - time_at;
+    } else {
+        uint16_t bpm = *(const uint16_t *)(beats + index * 8u + 2u);
+        if (!bpm)
+            return -1;
+        width = (int32_t)(6000000u / bpm);
+    }
+    if (width <= 0)
+        return -1;
+    beat = (double)index + (double)(target - time_at) / (double)width;
+    number = *(const uint16_t *)(beats + index * 8u);
+    if (number >= 1u && number <= 4u)
+        beat += (double)rx3_umod(number + 3u - rx3_umod(index, 4u), 4u);
+    if (beat < 0.0)
+        beat = 0.0;
+    if (*(const uint8_t *const volatile *)(reader + 4u) != impl ||
+        *(const uint8_t *const volatile *)(impl + 0x69cu) != grid)
+        return -1;
+    *phase_milli = (uint32_t)(beat * 1000.0);
+    return 0;
 }
 
 static int sprite_publish(struct sprite_job *job)
@@ -731,10 +797,9 @@ static void sprites_feature_after_image(void *render, void *image,
 static void sprites_feature_playhead(unsigned int deck, long position)
 {
     uint32_t phase = 0;
-    (void)position;
     if (deck >= 2u)
         return;
-    if (sprite_read_beat_phase(deck, &phase)) {
+    if (sprite_read_beat_phase(deck, position, &phase)) {
         sprite_decks[deck].have_phase = 0;
         return;
     }
