@@ -413,6 +413,19 @@ require(
     "stems must own its optional pad and LED hooks",
 )
 
+BROKER = (ROOT / "rx3_beatfx_broker.h").read_text()
+require(
+    "(next == type || next == 0)" in BROKER
+    and "(manager + 0x88u) != BEAT_FX_FADE_TAIL" in BROKER
+    and "#define BEAT_FX_FADE_TAIL 3" in BROKER,
+    "rbp's OFF requests type 0, so a replacing feature owns the block from "
+    "ON through OFF, and gives it back while stock rings out a tail",
+)
+require(
+    "cat \"$CORE_LOG\" >> \"$LOG\"" in CORE_MODULE.split("still active from")[1],
+    "a resident reinsertion copies the core log, the only way to read it",
+)
+
 print("Core regression guards: OK")
 require(
     "core_in_rbp = running_in_rbp();" in HOOK

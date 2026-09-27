@@ -60,6 +60,32 @@ static set_beat_fx_info_fn original_set_beat_fx_info;
 static void *volatile beat_fx_manager_seen;
 static uint32_t beat_fx_probe_last[10];
 
+/* the manager's type is both selection and ON: rbp's OFF sets the next type
+ * (+0x50) to 0 and ON restores the selected one. +0x4c is the type stock has
+ * faded to and +0x88 its fade state (3 is a tail ringing out).
+ *
+ * a feature that replaces a stock effect owns the block from ON through OFF:
+ * while the faded-to type is its own and the next is its own or off, on a
+ * settled channel. it hands the block back to stock during a tail, so stock
+ * can finish the effect it started before the feature took over. */
+#define BEAT_FX_FADE_TAIL 3
+
+static int rx3_beat_fx_owned(const uint8_t *manager, int type)
+{
+    int next = *(const volatile int *)(manager + 0x50u);
+    return *(const volatile int *)(manager + 0x4cu) == type &&
+           (next == type || next == 0) &&
+           *(const volatile int *)manager ==
+               *(const volatile int *)(manager + 0x04u) &&
+           *(const volatile int *)(manager + 0x88u) != BEAT_FX_FADE_TAIL;
+}
+
+static int rx3_beat_fx_on(const uint8_t *manager, int type)
+{
+    return rx3_beat_fx_owned(manager, type) &&
+           *(const volatile int *)(manager + 0x50u) == type;
+}
+
 static void hooked_operate_beat_effect(void *manager, Float2 *buffer,
                                        int frames, int preview)
 {
