@@ -47,8 +47,10 @@ require(
 )
 require(
     "#define BEAT_FX_DISPLAY_HELIX 13" in FEATURE
-    and "HELIX_CAPTION_A 0x144bu" in FEATURE
-    and "HELIX_CAPTION_B 0x144cu" in FEATURE
+    and "HELIX_CAPTION_FIRST 0x1449u" in FEATURE
+    and "HELIX_CAPTION_LAST 0x144cu" in FEATURE
+    and "HELIX_SELECT_FIRST 0x15aau" in FEATURE
+    and "HELIX_SELECT_LAST 0x15acu" in FEATURE
     and "rx3_relabel_image(image_id, &sc_label_caption)" in FEATURE
     and "BEAT_NUMBER_IMAGES ((const uint16_t *)0x004c4780)" in FEATURE
     and "*(uint32_t *)(block + 0x10u) = sc_ratio_beat_labels[sc_ratio_index];"

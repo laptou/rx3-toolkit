@@ -47,8 +47,12 @@
 #define BEAT_NUMBER_IMAGE_COUNT 32u
 #define BEAT_NUMBER_FIRST_ID 0x1547u
 #define BEAT_NUMBER_LAST_ID 0x1561u
-#define HELIX_CAPTION_A 0x144bu
-#define HELIX_CAPTION_B 0x144cu
+/* helix's name: four play-screen captions (off and on, two colour banks)
+   and three select-grid tiles (dim, normal, selected). */
+#define HELIX_CAPTION_FIRST 0x1449u
+#define HELIX_CAPTION_LAST 0x144cu
+#define HELIX_SELECT_FIRST 0x15aau
+#define HELIX_SELECT_LAST 0x15acu
 
 struct sc_deck {
     volatile float level_l2;
@@ -190,7 +194,8 @@ static uint32_t sidechain_feature_image_swap(uint32_t image_id)
     unsigned index;
     unsigned ratio;
     uint32_t label;
-    if (image_id == HELIX_CAPTION_A || image_id == HELIX_CAPTION_B)
+    if ((image_id >= HELIX_CAPTION_FIRST && image_id <= HELIX_CAPTION_LAST) ||
+        (image_id >= HELIX_SELECT_FIRST && image_id <= HELIX_SELECT_LAST))
         return rx3_relabel_image(image_id, &sc_label_caption);
     if (image_id < BEAT_NUMBER_FIRST_ID || image_id > BEAT_NUMBER_LAST_ID ||
         *BEAT_FX_SHOWN_TYPE != BEAT_FX_DISPLAY_HELIX)
