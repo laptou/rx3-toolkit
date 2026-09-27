@@ -29,6 +29,8 @@
 
 ---
 
+This tree tracks [Tratosca/rx3-toolkit](https://github.com/Tratosca/rx3-toolkit) at `0cb402e03d0c32d9bcc6c6fb8b8b4f40728e816a`, then adds animated sprites. Firmware 1.19 only. The mod stays in RAM: remove the USB stick and power-cycle to return to stock. See [provenance](docs/provenance.md).
+
 ## What you get
 
 ### 🎤 Stems in standalone mode
@@ -296,6 +298,14 @@ Leaving the stick in re-applies the mod at the next power-on. To turn it back in
 
 ---
 
+## Animated sprites
+
+Select the **Animated sprites** module and prepare `RX3_SPRITES` with the Toolbox tab of the same name. Each track load picks one animation for that deck from the folder. A pack is either a fixed frame rate or locked to that track's Rekordbox beat grid. Transparent pixels are a hard edge: if the hardware check does not show the waveform through the corners, the overlay stays off.
+
+Limits: 64×64, 16 frames, two decks. The repository ships geometric test art only. Your own PNGs stay on your machine. The checks to run on a player are in [hardware validation](docs/hardware-validation.md). The byte layout is in [sprites](docs/sprites.md).
+
+---
+
 ## FAQ
 
 <details>
@@ -387,6 +397,8 @@ Want one of these sooner? Or something else? Say so in an issue, or build it you
 | [Getting the RX3 filesystem](docs/extract-initramfs.md) | Getting a Linux filesystem out of the published GPL sources |
 | [Troubleshooting](docs/troubleshooting.md) | Symptoms, errors, fixes |
 | [Reference](REFERENCES.md) | How it all works: the platform, patching, the display, stems, the build, everything |
+| [Animated sprites](docs/sprites.md) | How to author a pack and what the player accepts |
+| [Hardware validation](docs/hardware-validation.md) | What to check on a firmware 1.19 player before trusting an overlay |
 | [Contributing](CONTRIBUTING.md) | Build from source, run the tests, write a module |
 | [Legal position](LEGAL.md) | What this project does, what it does not distribute, and on what basis |
 | [Changelog](CHANGELOG.md) | What changed |
