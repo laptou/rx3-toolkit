@@ -14,7 +14,7 @@ from tools.rx3_sprites.limits import (
     MAX_EDGE,
     MAX_FRAMES,
     MAX_NAME,
-    MEMORY_CEILING,
+    MAX_PACK_BYTES,
     MODE_BEAT,
     MODE_FPS,
     PACK_VERSION,
@@ -28,7 +28,7 @@ PAD = HEADER_SIZE - STRUCT.size
 
 
 class PackError(ValueError):
-    """The pack is truncated, inconsistent, or over the memory ceiling."""
+    """The pack is truncated, inconsistent, or over the per-pack size limit."""
 
 
 @dataclass(frozen=True)
@@ -55,8 +55,8 @@ def encode(pack: Pack) -> bytes:
     _validate(pack)
     name = pack.name.encode("utf-8")
     body = name + pack.palette + b"".join(pack.frames)
-    if len(body) > MEMORY_CEILING:
-        raise PackError("sprite pack exceeds the memory ceiling")
+    if HEADER_SIZE + len(body) > MAX_PACK_BYTES:
+        raise PackError(f"sprite pack exceeds the {MAX_PACK_BYTES} byte limit")
     header = STRUCT.pack(
         MAGIC,
         PACK_VERSION,
@@ -110,6 +110,8 @@ def encode(pack: Pack) -> bytes:
 
 
 def decode(data: bytes) -> Pack:
+    if len(data) > MAX_PACK_BYTES:
+        raise PackError(f"sprite pack exceeds the {MAX_PACK_BYTES} byte limit")
     if len(data) < HEADER_SIZE:
         raise PackError("sprite pack is shorter than its header")
     fields = STRUCT.unpack_from(data)
@@ -183,9 +185,9 @@ def _validate(pack: Pack) -> None:
     if not pack.name or len(pack.name.encode("utf-8")) > MAX_NAME:
         raise PackError("sprite name is empty or too long")
     if not 1 <= pack.width <= MAX_EDGE or not 1 <= pack.height <= MAX_EDGE:
-        raise PackError("sprite dimensions exceed 64")
+        raise PackError(f"sprite dimensions exceed {MAX_EDGE}")
     if not 1 <= pack.frame_count <= MAX_FRAMES:
-        raise PackError("sprite frame count exceeds 16")
+        raise PackError(f"sprite frame count exceeds {MAX_FRAMES}")
     if pack.anchor not in (ANCHOR_CENTER, ANCHOR_BOTTOM):
         raise PackError("unknown sprite anchor")
     if pack.proof.palette != 1 or pack.proof.entry_size != 2 or pack.proof.transparent != 0:

@@ -300,9 +300,9 @@ Leaving the stick in re-applies the mod at the next power-on. To turn it back in
 
 ## Animated sprites
 
-Select the **Animated sprites** module and prepare `RX3_SPRITES` with `python -m tools.rx3_sprites write --source DIR --dest DIR`, or with the Toolbox tab of the same name. The computer does not read analysis files. Each track load picks one animation for that deck from the folder. A pack is either a fixed frame rate or locked to the player's beat clock. The clock address is recorded only after a firmware 1.19 proof; until then beat mode draws nothing and fixed-rate packs still play. Each deck draws into its own overlay window on the waveform strip. Index 0 is transparent.
+Select the **Animated sprites** module and prepare `RX3_SPRITES` with `python -m tools.rx3_sprites write --source DIR --dest DIR`, or with the Toolbox tab of the same name. The computer does not read analysis files. Each track load picks one animation for that deck from the folder. A pack is either a fixed frame rate or locked to the player's beat clock. The clock address is recorded only after a firmware 1.19 proof; until then beat mode draws nothing and fixed-rate packs still play. The player draws one sprite centred over the whole waveform view (both deck strips), scaled at runtime with nearest-neighbour to about 0.9× the height of one strip (200 px on screen). Anchor 1 centres it on the view; anchor 2 rests it on the bottom edge. Index 0 is transparent.
 
-Limits: 64×64, 16 frames, two decks. The repository ships geometric test art only. Your own PNGs stay on your machine. The checks to run on a player are in [hardware validation](docs/hardware-validation.md). The byte layout is in [sprites](docs/sprites.md).
+Limits: 256×256, 256 frames, 4 MiB per pack. The repository ships geometric test art only. Your own PNGs stay on your machine. The checks to run on a player are in [hardware validation](docs/hardware-validation.md). The byte layout is in [sprites](docs/sprites.md).
 
 ---
 

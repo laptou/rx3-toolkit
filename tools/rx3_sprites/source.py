@@ -74,7 +74,7 @@ def load_source(directory: Path) -> Source:
     height = _positive(manifest["height"], "height")
     frame_count = _positive(manifest["frame_count"], "frame_count")
     if width > MAX_EDGE or height > MAX_EDGE or frame_count > MAX_FRAMES:
-        raise SourceError("frames exceed 64x64 or 16 frames")
+        raise SourceError(f"frames exceed {MAX_EDGE}x{MAX_EDGE} or {MAX_FRAMES} frames")
     fps_num = _whole(manifest["fps_num"], "fps_num")
     fps_den = _whole(manifest["fps_den"], "fps_den")
     frames_per_beat = _whole(manifest["frames_per_beat"], "frames_per_beat")

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 # Hardware validation
 
-These checks are run on an XDJ-RX3 with firmware 1.19. Each deck gets one overlay window, centred on that deck's waveform strip (deck 0 top strip, deck 1 bottom). Anchor 2 rests the sprite on the strip's bottom edge. Index 0 is transparent. `RX3_RUNTIME/sprite-status.log` notes "sprite window open deck N" or "sprite window could not be created".
+These checks are run on an XDJ-RX3 with firmware 1.19. The player shows one sprite centred over the whole waveform view (both deck strips), scaled at runtime with nearest-neighbour to about 0.9× the height of one waveform strip (200 px on screen). Anchor 1 centres it on the view; anchor 2 rests it on the bottom edge. Index 0 is transparent. `RX3_RUNTIME/sprite-status.log` notes "sprite window open deck N" or "sprite window could not be created".
 
 Nothing in this procedure writes internal flash. Boot without the stick, or power-cycle, to return to stock.
 

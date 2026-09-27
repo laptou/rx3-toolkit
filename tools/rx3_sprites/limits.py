@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
 """Bounds shared by the host compilers and the firmware-1.19 player."""
 
-MAX_EDGE = 64
-MAX_FRAMES = 16
+MAX_EDGE = 256
+MAX_FRAMES = 256
 MAX_PACKS = 64
 MAX_NAME = 44
-# two resident packs, plus a few reloads, stay far under the player's stem budget
-MEMORY_CEILING = 2 * 1024 * 1024
+# player rejects a pack whose total file size exceeds this
+MAX_PACK_BYTES = 4 * 1024 * 1024
 HEADER_SIZE = 64
 ALPHA_CUTOFF = 128
 SCHEMA = 1

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Host-side memory report. The player still refuses a pack that does not fit."""
+"""Host-side capacity report. A pack over MAX_PACK_BYTES is rejected."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from tools.rx3_sprites.limits import MEMORY_CEILING
+from tools.rx3_sprites.limits import MAX_PACK_BYTES
 
 
 def directory_bytes(path: Path, suffix: str) -> int:
@@ -20,8 +20,8 @@ def directory_bytes(path: Path, suffix: str) -> int:
 
 def report(sprite_bytes: int, stem_bytes: int = 0) -> str:
     message = f"sprites {sprite_bytes} bytes, stems {stem_bytes} bytes"
-    if sprite_bytes > MEMORY_CEILING:
+    if sprite_bytes > MAX_PACK_BYTES:
         return (
-            f"{message}; sprite packs exceed the {MEMORY_CEILING} byte player ceiling"
+            f"{message}; sprite pack exceeds the {MAX_PACK_BYTES} byte per-pack limit"
         )
     return message

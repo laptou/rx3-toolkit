@@ -3,7 +3,7 @@
 
 Firmware 1.19. The overlay is optional and off unless you select the sprites module and the USB stick contains `RX3_SPRITES`.
 
-Each deck gets one overlay window, centred on that deck's waveform strip (deck 0 top strip, deck 1 bottom). Anchor 2 rests the sprite on the strip's bottom edge. Index 0 is transparent. `RX3_RUNTIME/sprite-status.log` notes "sprite window open deck N" or "sprite window could not be created".
+The player shows one sprite centred over the whole waveform view (both deck strips), scaled up at runtime with nearest-neighbour so it is about 0.9× the height of one waveform strip (200 px on screen). Anchor 1 (center) centres it on the whole waveform view; anchor 2 (bottom) rests it on the bottom edge of the whole waveform view. Source art is scaled, so authors can use small pixel art or larger art. Index 0 is transparent. `RX3_RUNTIME/sprite-status.log` notes "sprite window open deck N" or "sprite window could not be created".
 
 ## What you put on the stick
 
@@ -26,8 +26,8 @@ A source folder holds `manifest.json` plus either a PNG sequence or one sheet.
 | schema | 1 |
 | name | file stem, no slash, not hidden |
 | layout | `sequence` or `sheet` |
-| width, height | 1..64, same for every frame |
-| frame_count | 1..16 |
+| width, height | 1..256, same for every frame |
+| frame_count | 1..256 |
 | mode | `fps` or `beat` |
 | fps_num, fps_den | positive for `fps`, otherwise 0 |
 | frames_per_beat, beats_per_loop | their product equals `frame_count` for `beat` |
@@ -42,7 +42,7 @@ python -m tools.rx3_sprites preview --source DIR -v
 python -m tools.rx3_sprites write --source DIR --dest DIR
 ```
 
-The Toolbox **Animated sprites** tab previews the mask and writes the same folder. It does not edit Rekordbox databases or audio files. It warns when the packs exceed the 2 MiB player ceiling. The player still refuses a pack that does not fit.
+The Toolbox **Animated sprites** tab previews the mask and writes the same folder. It does not edit Rekordbox databases or audio files. A pack whose total file size exceeds 4 MiB (`4 * 1024 * 1024` bytes) is rejected by the pack builder and the player. The Toolbox capacity report uses that same 4 MiB per-pack limit.
 
 ## Pack bytes
 

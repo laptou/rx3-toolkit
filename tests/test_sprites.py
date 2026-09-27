@@ -15,7 +15,7 @@ from tools.rx3_sprites.capacity import report
 from tools.rx3_sprites.census import CensusError, histogram, summarize
 from tools.rx3_sprites.cli import main as sprites_main
 from tools.rx3_sprites.fixture import checker, proof_8
-from tools.rx3_sprites.limits import MEMORY_CEILING
+from tools.rx3_sprites.limits import MAX_PACK_BYTES
 from tools.rx3_sprites.pack import PackError, decode, encode
 from tools.rx3_sprites.provision import write_tree
 from tools.rx3_sprites.quantize import QuantizeError, quantize
@@ -155,7 +155,7 @@ class ProvisionTests(unittest.TestCase):
             self.assertFalse((written / "format.proof").exists())
             self.assertFalse((written / "anchors.proof").exists())
             self.assertEqual((root / "PIONEER" / "keep.txt").read_text(encoding="utf-8"), "leave me")
-            self.assertIn("exceed", report(MEMORY_CEILING + 1, 10))
+            self.assertIn("exceed", report(MAX_PACK_BYTES + 1, 10))
             # macOS deletes the AppleDouble sidecar when the real file goes.
             (written / "._catalog.txt").write_bytes(b"resource")
             real_unlink = Path.unlink
