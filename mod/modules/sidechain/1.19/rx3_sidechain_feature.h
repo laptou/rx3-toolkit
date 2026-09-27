@@ -5,7 +5,8 @@
  * leaves each deck's post-fader output for the master to sum, and the core
  * hands that block to channel_block below. while HELIX is the beat fx and
  * it is ON, the beat fx channel (CH1 or CH2) is the trigger and the other
- * deck is ducked by its level.
+ * deck is ducked by its level. that level is taken through a 150 hz
+ * low-pass, so the duck follows the kick and bass.
  *
  * the stock helix never runs: from ON through OFF the broker's
  * rx3_beat_fx_owned holds, operateBeatEffect returns at once, and the
@@ -70,22 +71,32 @@ static const struct rx3_label_mask *const sc_ratio_masks[SC_RATIO_COUNT] = {
 };
 
 static struct sc_deck sc_decks[2] = { { -40.0f, 1.0f }, { -40.0f, 1.0f } };
+/* each deck's key filter, left and right. */
+static struct sc_key_filter sc_keys[2][2];
 static volatile unsigned sc_ratio_index = SC_RATIO_DEFAULT;
 static int sc_logged;
 
-static float sc_block_peak_l2(const Float2 *buf, int frames)
+/* the block's peak through the key filter. this level is what the meter
+   draws and what the other deck ducks by. */
+static float sc_block_peak_l2(struct sc_key_filter key[2], const Float2 *buf,
+                              int frames)
 {
     float peak = 0.0f;
     int index;
     for (index = 0; index < frames; index++) {
-        float left = buf[index].left < 0.0f ? -buf[index].left : buf[index].left;
-        float right =
-            buf[index].right < 0.0f ? -buf[index].right : buf[index].right;
+        float left = sc_key_step(&key[0], buf[index].left);
+        float right = sc_key_step(&key[1], buf[index].right);
+        if (left < 0.0f)
+            left = -left;
+        if (right < 0.0f)
+            right = -right;
         if (left > peak)
             peak = left;
         if (right > peak)
             peak = right;
     }
+    sc_key_settle(&key[0]);
+    sc_key_settle(&key[1]);
     return sc_log2(peak);
 }
 
@@ -124,7 +135,7 @@ static void sidechain_feature_channel_block(unsigned int deck, void *channel,
     unsigned trigger;
     float threshold;
     float release;
-    self->level_l2 = sc_block_peak_l2(output, frames);
+    self->level_l2 = sc_block_peak_l2(sc_keys[deck], output, frames);
     effect = manager ? *(const uint8_t *const *)(manager + 0x08u) : 0;
     trigger = manager ? *(const uint32_t *)manager : 2u;
     if (!effect || trigger >= 2u || !rx3_beat_fx_on(manager, BEAT_FX_HELIX)) {

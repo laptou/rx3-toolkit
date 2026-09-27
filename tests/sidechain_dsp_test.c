@@ -51,6 +51,34 @@ int main(void)
     if (!near(sc_attack_ms(160.0f), 10.0f, 0.001f, "attack") ||
         sc_attack_ms(1.0f) != 0.5f)
         return 12;
+    /* the key filter passes the kick, is 3 db down at 150 hz, and holds the
+       hats well under it */
+    {
+        static const float hz[4] = { 50.0f, 150.0f, 1000.0f, 5000.0f };
+        static const float want_db[4] = { 0.0f, -3.01f, -33.0f, -61.0f };
+        static const float tolerance_db[4] = { 0.2f, 0.2f, 1.0f, 2.0f };
+        unsigned tone;
+        for (tone = 0; tone < 4u; tone++) {
+            struct sc_key_filter key = { 0.0f, 0.0f, 0.0f, 0.0f };
+            float peak = 0.0f;
+            int n;
+            for (n = 0; n < 44100; n++) {
+                float y = sc_key_step(
+                    &key, sinf(6.2831853f * hz[tone] * (float)n / SC_SAMPLE_RATE));
+                if (n >= 22050 && fabsf(y) > peak)
+                    peak = fabsf(y);
+            }
+            if (!near(20.0f * log10f(peak), want_db[tone], tolerance_db[tone],
+                      "key filter"))
+                return 13;
+            /* a deck gone silent settles to exactly zero */
+            for (n = 0; n < 441000; n++)
+                sc_key_step(&key, 0.0f);
+            sc_key_settle(&key);
+            if (key.y1 != 0.0f || key.y2 != 0.0f)
+                return 14;
+        }
+    }
     puts("sidechain dsp: OK");
     return 0;
 }

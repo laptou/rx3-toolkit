@@ -100,6 +100,44 @@ static float sc_attack_ms(float release_ms)
     return attack < 0.5f ? 0.5f : attack;
 }
 
+/* the key is heard through a 150 hz low-pass, so the kick and bass drive the
+   duck and hats and vocals do not. second-order butterworth at 44.1 khz,
+   direct form i: the poles sit close to 1, where the transposed form loses
+   float precision. only the level detector hears it; the trigger plays dry. */
+#define SC_KEY_B0 1.1247996e-04f
+#define SC_KEY_B1 2.2495992e-04f
+#define SC_KEY_A1 (-1.9697786f)
+#define SC_KEY_A2 0.97022848f
+
+struct sc_key_filter {
+    float x1;
+    float x2;
+    float y1;
+    float y2;
+};
+
+static float sc_key_step(struct sc_key_filter *self, float x)
+{
+    float y = SC_KEY_B0 * (x + self->x2) + SC_KEY_B1 * self->x1 -
+              SC_KEY_A1 * self->y1 - SC_KEY_A2 * self->y2;
+    self->x2 = self->x1;
+    self->x1 = x;
+    self->y2 = self->y1;
+    self->y1 = y;
+    return y;
+}
+
+/* a silent deck decays the state into denormals, which are slow on vfp. */
+static void sc_key_settle(struct sc_key_filter *self)
+{
+    float y1 = self->y1 < 0.0f ? -self->y1 : self->y1;
+    float y2 = self->y2 < 0.0f ? -self->y2 : self->y2;
+    if (y1 < 1e-20f && y2 < 1e-20f) {
+        self->y1 = 0.0f;
+        self->y2 = 0.0f;
+    }
+}
+
 /* one-pole step for a block: how much of the gap to the target remains. */
 static float sc_block_keep(float time_ms, int frames)
 {

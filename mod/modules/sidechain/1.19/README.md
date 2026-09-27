@@ -8,6 +8,9 @@ Select HELIX, pick CH1 or CH2 with the Beat FX channel selector, and press ON:
 
 - **The Beat FX channel** is the trigger. It plays dry.
 - **The other deck** ducks whenever the trigger goes over the threshold.
+  The trigger's level is measured through a 150 Hz low-pass, so its kick and
+  bass drive the duck and its hats and vocals do not. The meter shows that
+  filtered level. You still hear the trigger unfiltered.
 - **DEPTH** sets the threshold: 0 dB fully left, down to -36 dB fully right.
 - **The BEAT arrows** step the ratio: 2:1, 3:1, 4:1 (the start), 6:1, 8:1,
   12:1, 20:1 and a limiter (∞:1). The cut never goes past 24 dB. The screen
