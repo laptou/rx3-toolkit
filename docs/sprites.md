@@ -56,6 +56,6 @@ Each successful track load picks one pack for that deck. The pick is a function 
 
 Fixed-rate frames follow wall time, so a skipped refresh jumps ahead. Beat-mode frames follow the player's own beat clock: absolute beat phase, in beats from the grid origin. Seek, cue, and a tempo change move that clock, so they move the frame. The pitch fader is playback speed, not the clock.
 
-The address of that clock is recorded only after a firmware 1.19 log shows it advancing one beat per audible beat, jumping on seek or cue, and staying independent of the pitch fader. Until that proof, beat mode logs `sprites: beat clock unavailable` once and draws nothing. Fixed-rate packs still play.
+The clock is rbp's own beat grid for the loaded track, read at the playhead and interpolated between grid beats. Loops start on a bar downbeat. A track without a grid logs `sprites: beat clock unavailable` once and its beat-mode pack draws nothing. Fixed-rate packs still play.
 
-A bad pack or a memory refusal disables that deck only. Stock drawing and stems keep running.
+A bad pack disables that deck only. Stock drawing and stems keep running.
