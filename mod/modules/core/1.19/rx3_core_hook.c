@@ -2182,11 +2182,39 @@ static void uninstall_performance_hooks(void)
     uninstall_hook(&load_hook);
 }
 
+/* LD_PRELOAD reaches every helper rbp spawns. the hook addresses are rbp's,
+   and reading them from another program segfaults it, so only a process whose
+   argv[0] ends in "rbp" may go on. */
+static int core_in_rbp;
+
+static int running_in_rbp(void)
+{
+    char command[256];
+    ssize_t count;
+    ssize_t end = 0;
+    int fd = open("/proc/self/cmdline", O_RDONLY);
+    if (fd < 0)
+        return 0;
+    count = read(fd, command, sizeof(command) - 1u);
+    close(fd);
+    if (count <= 0)
+        return 0;
+    command[count] = 0;
+    while (end < count && command[end])
+        end++;
+    if (end < 3 || memcmp(command + end - 3, "rbp", 3))
+        return 0;
+    return end == 3 || command[end - 4] == '/';
+}
+
 __attribute__((constructor)) static void initialize(void)
 {
     /* Each feature is a module of its own and announces itself through the
        environment its module.sh exports. The core installs either way, so that
        key shift works without sidecars and stems works without key shift. */
+    core_in_rbp = running_in_rbp();
+    if (!core_in_rbp)
+        return;
 #if defined(RX3_EMULATOR_BUILD)
     /* Before anything else, and before the feature gate below: init() runs
        whether or not a feature is selected, so both of these have to be
@@ -2371,6 +2399,8 @@ reject_performance_hooks:
 
 __attribute__((destructor)) static void finalize(void)
 {
+    if (!core_in_rbp)
+        return;
     state_thread_running = 0;
     uninstall_performance_hooks();
     for (unsigned int i = 0; i < 2u; i++) {

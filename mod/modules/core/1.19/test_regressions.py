@@ -405,3 +405,15 @@ require(
 )
 
 print("Core regression guards: OK")
+require(
+    "core_in_rbp = running_in_rbp();" in HOOK
+    and '"/proc/self/cmdline"' in HOOK
+    and HOOK.index("core_in_rbp = running_in_rbp();")
+    < HOOK.index("install_hook(\n        &load_hook"),
+    "helpers rbp spawns inherit LD_PRELOAD and segfault on rbp's hook "
+    "addresses, so the constructor must stop outside rbp before any guard read",
+)
+require(
+    "rm -f $RBP_READY_FILES $RBP_DIAGNOSTIC_FILES" in AUTOEXEC,
+    "a readiness file left by the previous rbp must not declare the new one up",
+)
