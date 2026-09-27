@@ -37,6 +37,9 @@ ALLOWED = {
     "mmap", "mprotect", "munmap", "open",
     "pthread_create", "pthread_detach",
     "read", "strlen", "sysconf", "usleep", "write",
+    # the crash report. all three are GLIBC_2.4 exports of the player's
+    # /lib/libc-2.13.so.
+    "pipe", "sigaction", "sigaltstack",
 }
 
 # Names that must never appear, with why, so a failure explains itself.

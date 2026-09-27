@@ -535,6 +535,7 @@ static int blink_phase_is_on(void)
 
 static void refresh_performance_ui(void);
 static int read_exactly(int fd, void *destination, size_t length);
+#include "rx3_core_crash.h"
 
 static uint8_t tab_image_pixels[TAB_IMAGE_COUNT][TAB_IMAGE_BYTES];
 static uint8_t sprite_placeholder[2];
@@ -674,6 +675,7 @@ static void *watch_patch_state(void *unused)
                 if (runtime_features[i].active && runtime_features[i].report)
                     runtime_features[i].report();
         if (ticks == 100u) {
+            crash_reclaim();
             log_number("probe text draw calls = ", draw_calls);
             log_number("probe main-window draws = ", main_window_draws);
             log_number("probe image draw calls = ", image_draw_calls);
@@ -2215,6 +2217,7 @@ __attribute__((constructor)) static void initialize(void)
     core_in_rbp = running_in_rbp();
     if (!core_in_rbp)
         return;
+    crash_install();
 #if defined(RX3_EMULATOR_BUILD)
     /* Before anything else, and before the feature gate below: init() runs
        whether or not a feature is selected, so both of these have to be
