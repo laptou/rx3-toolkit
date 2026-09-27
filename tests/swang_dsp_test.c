@@ -170,6 +170,59 @@ int main(void)
             }
     }
 
+    /* a click on every thirty-second, across tempos, depths and notes. the
+       stretch must not splice through a hit inside a sixteenth: no ghost of
+       a hit above -20 db, and no hit cut short by more than 2%. */
+    {
+        static const float swings[3] = { 0.6f, 2.0f / 3.0f, SW_HARDEST };
+        struct sw_stereo *clicks = calloc(700000, sizeof(*clicks));
+        double bpm;
+        int slices;
+        int at;
+        for (slices = 1; slices <= 4; slices *= 2)
+            for (bpm = 100.0; bpm <= 160.0; bpm += 7.3)
+                for (pair = 0; pair < 3; pair++) {
+                    double beat = 44100.0 * 60.0 / bpm;
+                    double pair_frames = beat * slices / 2.0;
+                    int total = (int)(pair_frames * 10.0);
+                    for (index = 0; index < total; index++) {
+                        double in = fmod((double)index, beat / 8.0);
+                        clicks[index].left = clicks[index].right =
+                            in < 24.0 ? 0.5f : 0.0f;
+                    }
+                    sw_reset(&state);
+                    for (at = 0; at < total; at += BLOCK) {
+                        int frames = total - at < BLOCK ? total - at : BLOCK;
+                        sw_process(&state, clicks + at, frames,
+                                   (float)fmod(at / pair_frames, 1.0),
+                                   (float)(1.0 / pair_frames), swings[pair],
+                                   (float)pair_frames, slices);
+                    }
+                    for (index = (int)(3.0 * pair_frames);
+                         index < (int)(9.0 * pair_frames);) {
+                        double share = 0.0;
+                        if (fabsf(clicks[index].left) <= 1e-4f) {
+                            index++;
+                            continue;
+                        }
+                        while (fabsf(clicks[index].left) > 1e-4f) {
+                            share += clicks[index].left * clicks[index].left;
+                            index++;
+                        }
+                        share /= 24.0 * 0.25;
+                        if ((share < 0.5 && share > 0.01) ||
+                            (share >= 0.5 && share < 0.98)) {
+                            printf("bpm %.1f swing %.3f slices %d: a hit at "
+                                   "%.3f of its energy\n",
+                                   bpm, swings[pair], slices, share);
+                            free(clicks);
+                            return 9;
+                        }
+                    }
+                }
+        free(clicks);
+    }
+
     /* a treble and a bass tone through the warp, after the first pair.
        out-of-phase splices would spread them into sidebands. */
     {

@@ -19,7 +19,10 @@
  *   - a second-note sixteenth is shorter once swung. its tail is cut by the
  *     next pin.
  * every splice lands in phase with the audio already playing, and none runs
- * through an attack.
+ * through an attack. hits inside a sixteenth (a thirty-second hat, say) are
+ * marked in an onset map as the input is written, and the stretch waits for
+ * a bit of tail with none in it; spliced through, a hit is heard cut or
+ * twice, which is a crackle.
  */
 
 #ifndef RX3_SWANG_DSP_H
@@ -49,11 +52,14 @@
    50 hz. a splice that places a hit may only land up to 2 ms late. */
 #define SW_LAG_WIDE 441u
 #define SW_LAG_NEAR 96u
-/* the onset test's windows, in frames: after the hit, the gap before it,
-   and the stretch before that it is compared with. */
-#define SW_ONSET_AFTER 128u
-#define SW_ONSET_GAP 128u
-#define SW_ONSET_BEFORE 512u
+/* the onset map: the input is cut into 64-frame (1.5 ms) chunks as it is
+   written, and a chunk whose treble jumps 4x (6 db) over the 8 before it is
+   marked as a hit. */
+#define SW_CHUNK 64u
+#define SW_CHUNKS (SW_RING / SW_CHUNK)
+#define SW_ONSET_HISTORY 8u
+/* how far either side of a pin's grid place its hit is looked for. */
+#define SW_ONSET_REACH 128u
 /* a held delay the swing's glide has moved this far from is set again. */
 #define SW_SLACK 441u
 #define SW_MATCH_WINDOW 1024u
@@ -75,6 +81,11 @@ struct sw_state {
     uint32_t faded;  /* frames into the crossfade, SW_FADE when none */
     int region;
     int placed;      /* this region's delay has been set since entering it */
+    uint8_t onset[SW_CHUNKS];
+    float edge;      /* the chunk being written: its treble so far */
+    float last;      /* the last frame written, mono */
+    float history[SW_ONSET_HISTORY];
+    uint32_t history_at;
 };
 
 static float sw_hann_table[SW_HANN_TABLE + 1u];
@@ -99,6 +110,8 @@ struct sw_plan {
                         the next slice's hit before its fade is done */
     int ahead;       /* a pin's hit, in frames after the fade (<0: passed) */
     int straight;    /* no swing: delay 0 exactly, the input untouched */
+    float now;       /* the stretch's frame in the pair, as it splices */
+    float grid;      /* a thirty-second note, in frames */
 };
 
 /* one pair's slices: each note cut into `slices` sixteenths. */
@@ -134,7 +147,7 @@ static float sw_slice_delay(const struct sw_slices *cut, int j)
 
 static struct sw_plan sw_pin(const struct sw_slices *cut, int j, float t)
 {
-    struct sw_plan plan = { 0, 0u, 0u, 0u, 0, 0 };
+    struct sw_plan plan = { 0, 0u, 0u, 0u, 0, 0, 0.0f, 0.0f };
     int count = 2 * cut->per_note;
     int home = j >= count ? j - count : j;
     plan.region = 2 * home;
@@ -152,7 +165,7 @@ static struct sw_plan sw_pin(const struct sw_slices *cut, int j, float t)
 static struct sw_plan sw_plan_at(float t, float swing, float pair_frames,
                                  int slices)
 {
-    struct sw_plan plan = { 0, 0u, 0u, 0u, 0, 1 };
+    struct sw_plan plan = { 0, 0u, 0u, 0u, 0, 1, 0.0f, 0.0f };
     struct sw_slices cut;
     float attack = (float)SW_ATTACK;
     float preroll = (float)SW_PREROLL;
@@ -194,6 +207,11 @@ static struct sw_plan sw_plan_at(float t, float swing, float pair_frames,
         plan.target = sw_frames(here + (next - here) * (t - stretch_from) /
                                            (stretch_end - stretch_from));
         plan.most = sw_frames(here + (t - stretch_from) - (float)SW_FADE);
+        /* a splice now would still be fading when the pin is due. */
+        if (t > stretch_end - (float)SW_FADE)
+            plan.most = 0u;
+        plan.now = t - (float)SW_FADE;
+        plan.grid = 0.5f * cut.source;
         return plan;
     }
     /* a second-note slice plays whole until the next pin cuts its tail. */
@@ -254,29 +272,57 @@ static float sw_mono(const struct sw_state *state, uint32_t delay)
     return sample.left + sample.right;
 }
 
-/* whether a hit starts at delay `at`: the treble, taken as the change from
-   one frame to the next so a hat is seen over a bass line, jumps 4x (6 db)
-   over the 12 ms before it. a hit still ahead of the write head counts. */
+/* one frame into the onset map. the treble is the change from one frame to
+   the next, so a hat is seen over a bass line. */
+static void sw_note_onset(struct sw_state *state, struct sw_stereo frame)
+{
+    float mono = frame.left + frame.right;
+    float edge = mono - state->last;
+    float mean = 0.0f;
+    uint32_t i;
+    state->last = mono;
+    state->edge += edge * edge;
+    if (state->written & (SW_CHUNK - 1u))
+        return;
+    for (i = 0u; i < SW_ONSET_HISTORY; i++)
+        mean += state->history[i];
+    mean *= 1.0f / (float)SW_ONSET_HISTORY;
+    state->onset[((state->written - 1u) / SW_CHUNK) & (SW_CHUNKS - 1u)] =
+        state->edge > 5e-5f && state->edge > 4.0f * mean;
+    state->history[state->history_at] = state->edge;
+    state->history_at = (state->history_at + 1u) % SW_ONSET_HISTORY;
+    state->edge = 0.0f;
+}
+
+/* the smallest delay, from `low` up to `high`, that sits in a chunk marked
+   as a hit; high + 1 if none. the chunk still being written, and anything
+   not written yet, is not known and does not count. */
+static uint32_t sw_next_onset(const struct sw_state *state, uint32_t low,
+                              uint32_t high)
+{
+    uint32_t newest = state->written - 1u;
+    uint32_t known = state->written & (SW_CHUNK - 1u);
+    uint32_t delay = low < known ? known : low;
+    while (delay <= high) {
+        uint32_t frame = newest - delay;
+        uint32_t first = newest - (frame | (SW_CHUNK - 1u));
+        if (state->onset[(frame / SW_CHUNK) & (SW_CHUNKS - 1u)])
+            return first > low ? first : low;
+        delay = newest - (frame & ~(SW_CHUNK - 1u)) + 1u;
+    }
+    return high + 1u;
+}
+
+/* whether a hit sits within a few ms of delay `at`. a hit that is not
+   written yet counts, so a pin that cannot see keeps its timing. */
 static int sw_onset(const struct sw_state *state, int at)
 {
-    float after = 0.0f;
-    float before = 0.0f;
-    uint32_t i;
-    if (at < (int)SW_ONSET_AFTER)
+    uint32_t low;
+    if (at < (int)(SW_ONSET_REACH + SW_CHUNK))
         return 1;
-    for (i = 0u; i < SW_ONSET_AFTER; i++) {
-        uint32_t d = (uint32_t)at - SW_ONSET_AFTER + i;
-        float edge = sw_mono(state, d) - sw_mono(state, d + 1u);
-        after += edge * edge;
-    }
-    for (i = 0u; i < SW_ONSET_BEFORE; i++) {
-        uint32_t d = (uint32_t)at + SW_ONSET_GAP + i;
-        float edge = sw_mono(state, d) - sw_mono(state, d + 1u);
-        before += edge * edge;
-    }
-    return after > 1e-4f &&
-           after * (float)SW_ONSET_BEFORE >
-               4.0f * before * (float)SW_ONSET_AFTER;
+    low = (uint32_t)at - SW_ONSET_REACH;
+    return sw_next_onset(state, low, (uint32_t)at + SW_ONSET_REACH) <=
+           (uint32_t)at + SW_ONSET_REACH;
 }
 
 /* how well the reader at candidate carries on from the one at playing,
@@ -372,6 +418,24 @@ static void sw_splice(struct sw_state *state, uint32_t to)
     state->faded = 0u;
 }
 
+/* a reader this close to the write head fades out over input not written
+   yet, which the onset map cannot see. the grid is all that is known of it:
+   the fade must not cross a thirty-second note, where a hit is likely. */
+static int sw_blind_on_grid(struct sw_plan plan, uint32_t now)
+{
+    float from;
+    float to;
+    int step;
+    if (now >= SW_FADE + SW_CHUNK || !(plan.grid > 0.0f))
+        return 0;
+    from = plan.now - (float)now - (float)SW_CHUNK;
+    to = plan.now - (float)now + (float)(SW_FADE + SW_CHUNK);
+    if (from <= 0.0f)
+        return 1;
+    step = (int)(from / plan.grid) + 1;
+    return (float)step * plan.grid <= to;
+}
+
 /* between splices: start one if the plan's delay is out of reach. */
 static void sw_steer(struct sw_state *state, struct sw_plan plan)
 {
@@ -382,12 +446,22 @@ static void sw_steer(struct sw_state *state, struct sw_plan plan)
         if (high > plan.most)
             high = plan.most;
         if (target >= now + SW_JUMP && plan.most >= target + SW_LAG_WIDE) {
-            /* fall back by about a slice, never forward. */
+            /* fall back by about a slice, never forward. the reader fading
+               out plays on for a fade and the new one replays back to where
+               it starts: a hit in either would be heard cut or twice, so the
+               splice waits for a stretch without one. */
             uint32_t low = target - SW_LAG_WIDE;
+            uint32_t hit = sw_next_onset(state, now > SW_FADE ? now - SW_FADE
+                                                              : 0u,
+                                         high);
             if (low < now + SW_JUMP / 4u)
                 low = now + SW_JUMP / 4u;
+            if (hit <= high)
+                high = hit - 1u;
+            if (hit <= now || high < low || sw_blind_on_grid(plan, now))
+                return;
             sw_splice(state, sw_match(state, now, low, high, target));
-        } else if (now > target + SW_SLACK) {
+        } else if (now > target + SW_SLACK && plan.most >= target) {
             /* ahead of the stretch after a seek or a glide back. */
             uint32_t low = target > SW_LAG_WIDE ? target - SW_LAG_WIDE : 0u;
             sw_splice(state, sw_match(state, now, low, high, target));
@@ -438,6 +512,13 @@ static inline void sw_reset(struct sw_state *state)
     state->faded = SW_FADE;
     state->region = 0;
     state->placed = 1;
+    for (index = 0u; index < SW_CHUNKS; index++)
+        state->onset[index] = 0u;
+    for (index = 0u; index < SW_ONSET_HISTORY; index++)
+        state->history[index] = 0.0f;
+    state->edge = 0.0f;
+    state->last = 0.0f;
+    state->history_at = 0u;
 }
 
 /* one block in place. pair_at (0..1) is where the block starts within its
@@ -457,6 +538,7 @@ static inline void sw_process(struct sw_state *state, struct sw_stereo *buf,
         struct sw_stereo out;
         state->ring[state->written & SW_RING_MASK] = buf[index];
         state->written++;
+        sw_note_onset(state, buf[index]);
         while (pair_frames > 0.0f && arrive >= pair_frames)
             arrive -= pair_frames;
         plan = sw_plan_at(arrive, swing, pair_frames, slices);
