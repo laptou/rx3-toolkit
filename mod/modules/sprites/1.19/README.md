@@ -8,7 +8,13 @@ per deck when a track loads. It draws one sprite centred over the whole
 waveform view (both deck strips), scaled at runtime with nearest-neighbour
 to about 0.9× the height of one waveform strip (200 px on screen). Anchor 1
 centres it on the view; anchor 2 rests it on the bottom edge. Source art is
-scaled. Index 0 is transparent.
+scaled. Index 0 is transparent. The sprite follows the deck that is playing;
+when both play, it switches to one that is more than twice as loud.
+
+While sprites run, UTILITY > ON AIR DISPLAY becomes SPRITE PULSE. With it ON,
+the sprite grows by up to 30% on each kick drum (the deck's audio through a
+~150 Hz low-pass). The choice is kept in `RX3_RUNTIME/sprite-pulse`. The
+stock ON AIR DISPLAY setting is held ON the whole time.
 `RX3_RUNTIME/sprite-status.log` notes "sprite window open deck N" or
 "sprite window could not be created". Fixed-rate packs play from wall time.
 Beat-mode packs follow the player's beat clock. That clock address is recorded

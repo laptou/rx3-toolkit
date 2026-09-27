@@ -148,6 +148,8 @@ static struct sprite_bass sprite_bass[2];
 static unsigned sprite_tick_ms;
 static unsigned sprite_logged;
 
+#include "rx3_sprites_menu.h"
+
 static void *sprite_slurp(const char *path, size_t *size_out, size_t limit)
 {
     int fd;
@@ -812,6 +814,7 @@ static void sprites_feature_after_image(void *render, void *image,
     (void)image_id;
     sprite_take_jobs();
     now = now_ms();
+    sprite_on_air_hold(now);
     if (now - sprite_tick_ms < SPRITE_FRAME_MS)
         return;
     sprite_tick_ms = now;
@@ -936,6 +939,7 @@ static int sprites_feature_install(void)
         sprite_start_load(0u, "boot");
         sprite_start_load(1u, "boot");
     }
+    sprite_menu_install();
     if (original_timestretch_operate)
         return 1;
     original_timestretch_operate = (timestretch_operate_fn)install_hook(
@@ -955,6 +959,7 @@ static int sprites_feature_install(void)
 static void sprites_feature_remove(void)
 {
     unsigned deck;
+    sprite_menu_remove();
     if (sprites_owns_timestretch) {
         uninstall_hook(&timestretch_fgpr_hook);
         uninstall_hook(&timestretch_operate_hook);

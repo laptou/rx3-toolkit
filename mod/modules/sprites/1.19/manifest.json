@@ -18,6 +18,7 @@
   ],
   "build_files": [
     "rx3_sprites_logic.h",
+    "rx3_sprites_menu.h",
     "rx3_sprites_feature.h"
   ]
 }

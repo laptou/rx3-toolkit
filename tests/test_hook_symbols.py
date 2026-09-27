@@ -40,6 +40,8 @@ ALLOWED = {
     # the crash report. all three are GLIBC_2.4 exports of the player's
     # /lib/libc-2.13.so.
     "pipe", "sigaction", "sigaltstack",
+    # the sprite pulse file; rbp imports fsync itself.
+    "fsync",
 }
 
 # Names that must never appear, with why, so a failure explains itself.

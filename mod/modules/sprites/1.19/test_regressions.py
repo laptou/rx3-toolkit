@@ -99,3 +99,20 @@ require(
     and "sprites disabled: pack failed validation" in FEATURE,
     "the player must accept only the 8-bit indexed pack encoding",
 )
+MENU = (Path(__file__).resolve().parent / "rx3_sprites_menu.h").read_text()
+require(
+    '#include "rx3_sprites_menu.h"' in FEATURE
+    and "sprite_menu_install();" in FEATURE
+    and "sprite_menu_remove();" in FEATURE
+    and "sprite_on_air_hold(now);" in FEATURE
+    and "0xf8, 0x40, 0x2d, 0xe9, 0x00, 0x50, 0xa0, 0xe1" in MENU
+    and "0x08, 0x40, 0x2d, 0xe9, 0x10, 0x30, 0x90, 0xe5" in MENU
+    and "UI_SET_UTIL_ON_AIR ((unsigned long)0x000fe924)" in MENU
+    and "((ui_set_util_on_air_fn)UI_SET_UTIL_ON_AIR)(1);" in MENU,
+    "the ON AIR DISPLAY row is the pulse switch, and on-air is held on",
+)
+require(
+    "sprite_pulse_save();" in MENU
+    and 'export RX3_SPRITE_PULSE_PATH="$USB/RX3_RUNTIME/sprite-pulse"' in MODULE,
+    "the pulse switch must survive a restart",
+)
