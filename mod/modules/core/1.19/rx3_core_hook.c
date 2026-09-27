@@ -380,12 +380,22 @@ static int sidechain_feature_beat_fx_operate(void *manager, Float2 *buffer,
 static int sidechain_feature_beat_fx_beat(void *innards, long delta);
 static void sidechain_feature_beat_fx_info(uint8_t *block);
 static uint32_t sidechain_feature_image_swap(uint32_t image_id);
+static int swang_feature_configured(void);
+static int swang_feature_install(void);
+static void swang_feature_remove(void);
+static void swang_feature_playhead(unsigned int deck, long position);
+static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
+                                         int frames);
+static int swang_feature_beat_fx_beat(void *innards, long delta);
+static int swang_feature_beat_fx_time(void *innards, long delta);
+static void swang_feature_beat_fx_info(uint8_t *block);
+static uint32_t swang_feature_image_swap(uint32_t image_id);
 static void rx3_notify_playhead(unsigned int deck, long position);
 static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
 static uint32_t rx3_swap_image(uint32_t image_id);
 
-#define RUNTIME_FEATURE_COUNT 5u
+#define RUNTIME_FEATURE_COUNT 6u
 
 static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
@@ -433,6 +443,18 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         .beat_fx_beat = sidechain_feature_beat_fx_beat,
         .beat_fx_info = sidechain_feature_beat_fx_info,
         .image_swap = sidechain_feature_image_swap,
+    },
+    {
+        .name = "swang",
+        .configured = swang_feature_configured,
+        .install = swang_feature_install,
+        .remove = swang_feature_remove,
+        .playhead = swang_feature_playhead,
+        .beat_fx_operate = swang_feature_beat_fx_operate,
+        .beat_fx_beat = swang_feature_beat_fx_beat,
+        .beat_fx_time = swang_feature_beat_fx_time,
+        .beat_fx_info = swang_feature_beat_fx_info,
+        .image_swap = swang_feature_image_swap,
     },
     {
         .name = "bandpass",
@@ -2192,6 +2214,7 @@ static void remove_channel_tap(void)
 #define RX3_HOOK_TYPES 1
 #include "../../sprites/1.19/rx3_sprites_feature.h"
 #include "../../sidechain/1.19/rx3_sidechain_feature.h"
+#include "../../swang/1.19/rx3_swang_feature.h"
 #include "../../bandpass/1.19/rx3_bandpass_feature.h"
 
 static int hooked_load(void *reader, const void *track_info)

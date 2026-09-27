@@ -1,0 +1,26 @@
+{
+  "id": "swang",
+  "name": "Swang",
+  "description": "Turns the SPIRAL beat FX into a swing that time-stretches the music against the tempo master's beat grid. DEPTH sets the strength, the BEAT arrows the swung note, and TIME the phase.",
+  "firmware": "1.19",
+  "default": false,
+  "order": 105,
+  "runtime_directory": "swang",
+  "namespace": "swang",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_swang_dsp.h",
+    "rx3_swang_feature.h",
+    "rx3_swang_labels.h"
+  ]
+}
