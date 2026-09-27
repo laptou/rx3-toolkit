@@ -360,11 +360,14 @@ static void sprites_feature_destroy_deck(unsigned int deck);
 static void sprites_feature_playhead(unsigned int deck, long position);
 static void sprites_feature_after_image(void *render, void *image,
                                        uint16_t window_layer, uint32_t image_id);
+static int sidechain_feature_configured(void);
+static int sidechain_feature_install(void);
+static void sidechain_feature_remove(void);
 static void rx3_notify_playhead(unsigned int deck, long position);
 static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
 
-#define RUNTIME_FEATURE_COUNT 3u
+#define RUNTIME_FEATURE_COUNT 4u
 
 static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
@@ -386,6 +389,11 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         sprites_feature_remove, sprites_feature_track_will_load,
         sprites_feature_track_did_load, 0, 0, sprites_feature_destroy_deck,
         sprites_feature_playhead, sprites_feature_after_image
+    },
+    {
+        "sidechain", 0, 0,
+        sidechain_feature_configured, sidechain_feature_install,
+        sidechain_feature_remove, 0, 0, 0, 0, 0, 0, 0
     }
 };
 
@@ -2076,6 +2084,7 @@ static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
 #include "../../stems/1.19/rx3_stems_feature.h"
 #define RX3_HOOK_TYPES 1
 #include "../../sprites/1.19/rx3_sprites_feature.h"
+#include "../../sidechain/1.19/rx3_sidechain_feature.h"
 
 static int hooked_load(void *reader, const void *track_info)
 {

@@ -1,0 +1,25 @@
+{
+  "id": "sidechain",
+  "name": "Sidechain",
+  "description": "Turns the DUB ECHO color FX into a sidechain compressor: turn one channel's COLOR knob left to make it the trigger, the other right to duck it, and set the release with PARAMETER.",
+  "firmware": "1.19",
+  "default": false,
+  "order": 100,
+  "runtime_directory": "sidechain",
+  "namespace": "sidechain",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_sidechain_dsp.h",
+    "rx3_sidechain_feature.h"
+  ]
+}
