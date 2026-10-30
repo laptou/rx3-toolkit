@@ -8,9 +8,9 @@ import os
 import tempfile
 from pathlib import Path
 
-from tools.rx3_sprites.pack import Pack, encode
+from tools.rx3_sprites.pack import Pack, PackError, decode, encode
 from tools.rx3_sprites.proof import proven_format
-from tools.rx3_sprites.source import compile_source, load_source
+from tools.rx3_sprites.source import collect_sources, compile_source, load_source
 
 
 log = logging.getLogger("rx3.sprites")
@@ -66,16 +66,53 @@ def write_tree(destination: Path, packs: list[tuple[str, Pack]]) -> Path:
     return root
 
 
-def provision(source: Path, destination: Path) -> str:
-    """Compile one source folder and write RX3_SPRITES. No analysis scan."""
+def provision(sources: list[Path], destination: Path) -> str:
+    """Compile sprite folders and merge them into RX3_SPRITES.
+
+    Packs already stored under `destination` stay. A compiled pack replaces
+    the stored pack with the same filename. No analysis scan.
+    """
     from tools.rx3_sprites.capacity import directory_bytes, report
 
-    loaded = load_source(source)
-    pack = compile_source(loaded, proven_format())
-    root = write_tree(destination, [(f"{pack.name}.rx3spr", pack)])
-    sprite_bytes = (root / f"{pack.name}.rx3spr").stat().st_size
+    compiled: list[tuple[str, Pack]] = []
+    for folder in collect_sources(sources):
+        pack = compile_source(load_source(folder), proven_format())
+        compiled.append((f"{pack.name}.rx3spr", pack))
+    names = [name for name, _pack in compiled]
+    if len(names) != len(set(names)):
+        raise ProvisionError("sprite filenames collide")
+    merged = dict(_existing_packs(destination))
+    for name, pack in compiled:
+        merged[name] = pack
+    root = write_tree(destination, list(merged.items()))
+    sizes = [(root / name).stat().st_size for name in merged]
     stem_bytes = directory_bytes(destination / "RX3_STEMS", ".rx3stem")
-    return report(sprite_bytes, stem_bytes)
+    return report(sizes, stem_bytes)
+
+
+def _existing_packs(destination: Path) -> list[tuple[str, Pack]]:
+    """Read packs already published. A bad pack aborts before anything is replaced."""
+    root = destination / "RX3_SPRITES"
+    if not root.exists():
+        return []
+    if not root.is_dir():
+        raise ProvisionError("RX3_SPRITES exists and is not a directory")
+    found: list[tuple[str, Pack]] = []
+    for child in sorted(root.iterdir()):
+        if (
+            not child.is_file()
+            or child.name.startswith(".")
+            or not child.name.endswith(".rx3spr")
+        ):
+            continue
+        if not _safe_name(child.name):
+            raise ProvisionError("sprite filename is unsafe")
+        try:
+            pack = decode(child.read_bytes())
+        except PackError as error:
+            raise ProvisionError(f"{child.name}: {error}") from error
+        found.append((child.name, pack))
+    return found
 
 
 def _safe_name(name: str) -> bool:

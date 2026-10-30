@@ -1,0 +1,23 @@
+{
+  "id": "spritefx",
+  "name": "Sprite beat fx",
+  "description": "Shared TRANS sprite. A named module (Charizard, Hector) supplies the pack and the beat-fx label. Not selected on its own.",
+  "firmware": "1.19",
+  "default": false,
+  "selectable": false,
+  "order": 108,
+  "runtime_directory": "spritefx",
+  "namespace": "spritefx",
+  "requires": ["core"],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_spritefx_feature.h"
+  ]
+}

@@ -18,4 +18,4 @@ The channel places it, centred on the waveform:
 The sprite is `RX3_SPRITES/charizard.rx3spr`, the same pack the sprites tools
 write. If that file is missing, TRANS stays stock.
 
-This mod is not for use with the sprites mod.
+This mod is not for use with the sprites mod or with Hector.

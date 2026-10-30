@@ -284,7 +284,7 @@ static void sprite_pads_install(void)
     }
     original_sprite_beat_jump_led = (check_slip_led_fn)install_pc_ldr_hook(
         &sprite_beat_jump_led_hook, CHECK_BEAT_JUMP_LED, beat_jump_led_guard,
-        (void *)hooked_sprite_beat_jump_led);
+        (void *)hooked_sprite_beat_jump_led, 3u);
     if (!original_sprite_beat_jump_led)
         log_line("sprites: beat jump leds stay stock");
     if (!original_on_key_pad)

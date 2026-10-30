@@ -35,12 +35,14 @@ A source folder holds `manifest.json` plus either a PNG sequence or one sheet.
 
 Alpha below 128 is transparent. Anything else is opaque. There is no soft edge. The whole animation shares one palette of at most 255 opaque colours. Extra colours are reduced to that palette with no dither. Packs store 8-bit indices. The player expands each frame to RGB565 when it loads the pack. Index 0 becomes magenta `0xF81F`, and the window colour key skips that colour. An opaque pixel of exactly that colour is moved one step to `0xF81E`.
 
-Repeat a write from the command line. Diagnostics go to stderr. `-v` prints the summary, `-vv` also prints each PNG name, and `-q` keeps errors only.
+Repeat a write from the command line. A write merges into `RX3_SPRITES`: packs already there stay, and a pack with the same filename is replaced. Diagnostics go to stderr. `-v` prints the summary, `-vv` also prints each PNG name, and `-q` keeps errors only.
 
 ```sh
 python -m tools.rx3_sprites preview --source DIR -v
-python -m tools.rx3_sprites write --source DIR --dest DIR
+python -m tools.rx3_sprites write --source DIR --dest USB
 ```
+
+`DIR` is one sprite folder, or a folder of them. Repeat `--source` to compile several in one write. `USB` is the stick root.
 
 The Toolbox **Animated sprites** tab previews the mask and writes the same folder. It does not edit Rekordbox databases or audio files. A pack whose total file size exceeds 4 MiB (`4 * 1024 * 1024` bytes) is rejected by the pack builder and the player. The Toolbox capacity report uses that same 4 MiB per-pack limit.
 
@@ -66,4 +68,4 @@ Press BEAT JUMP once for page 1. That page still beat-jumps. Press it again for 
 
 Until a pad is pressed, each deck still picks its own pack. The choice is kept in `RX3_RUNTIME/sprite-choice`: missing means the per-track pick, `off` means the overlay stays closed, and a catalog filename means that pack. A saved name that is no longer in the catalog falls back to the per-track pick.
 
-This mod is not for use with CHARIZARD2.
+This mod is not for use with CHARIZARD2 or HECTOR2.

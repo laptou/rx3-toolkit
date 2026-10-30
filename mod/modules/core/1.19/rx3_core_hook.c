@@ -393,15 +393,15 @@ static int swang_feature_beat_fx_beat(void *innards, long delta);
 static int swang_feature_beat_fx_time(void *innards, long delta);
 static void swang_feature_beat_fx_info(uint8_t *block);
 static uint32_t swang_feature_image_swap(uint32_t image_id);
-static int charizard2_feature_configured(void);
-static int charizard2_feature_install(void);
-static void charizard2_feature_remove(void);
-static int charizard2_feature_beat_fx_operate(void *manager, Float2 *buffer,
-                                              int frames);
-static uint32_t charizard2_feature_image_swap(uint32_t image_id);
-static void charizard2_feature_after_image(void *render, void *image,
-                                           uint16_t window_layer,
-                                           uint32_t image_id);
+static int spritefx_feature_configured(void);
+static int spritefx_feature_install(void);
+static void spritefx_feature_remove(void);
+static int spritefx_feature_beat_fx_operate(void *manager, Float2 *buffer,
+                                            int frames);
+static uint32_t spritefx_feature_image_swap(uint32_t image_id);
+static void spritefx_feature_after_image(void *render, void *image,
+                                         uint16_t window_layer,
+                                         uint32_t image_id);
 static void rx3_notify_playhead(unsigned int deck, long position);
 static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
@@ -472,13 +472,13 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         .image_swap = swang_feature_image_swap,
     },
     {
-        .name = "charizard2",
-        .configured = charizard2_feature_configured,
-        .install = charizard2_feature_install,
-        .remove = charizard2_feature_remove,
-        .beat_fx_operate = charizard2_feature_beat_fx_operate,
-        .image_swap = charizard2_feature_image_swap,
-        .after_image = charizard2_feature_after_image,
+        .name = "spritefx",
+        .configured = spritefx_feature_configured,
+        .install = spritefx_feature_install,
+        .remove = spritefx_feature_remove,
+        .beat_fx_operate = spritefx_feature_beat_fx_operate,
+        .image_swap = spritefx_feature_image_swap,
+        .after_image = spritefx_feature_after_image,
     },
     {
         .name = "bandpass",
@@ -1125,18 +1125,21 @@ static void *install_hook(struct installed_hook *hook, unsigned long address,
 #include "rx3_core_emulator_breadcrumbs.h"
 #endif
 
-/* Variant for ldr r3,[pc,#imm12] followed by push. The trampoline loads a copy
-   of the original literal value, replays push, and joins address+8. This
-   preserves r3 without depending on the shared object's mapped address. */
+/* Variant for ldr rd,[pc,#imm12] followed by one more instruction. The
+   trampoline reloads rd from a copied literal, replays that instruction, and
+   joins address+8, so the literal does not depend on where this object is
+   mapped. rd is the register the prologue loads, 0..14. */
 static void *install_pc_ldr_hook(struct installed_hook *hook,
                                  unsigned long address,
-                                 const uint8_t guard[8], void *replacement)
+                                 const uint8_t guard[8], void *replacement,
+                                 unsigned rd)
 {
-    if (memcmp((const void *)address, guard, 8))
+    if (rd > 14u || memcmp((const void *)address, guard, 8))
         return 0;
 
     uint32_t instruction = *(const uint32_t *)address;
-    if ((instruction & 0xfffff000u) != 0xe59f3000u)
+    uint32_t load = 0xe59f0000u | (rd << 12);
+    if ((instruction & 0xfffff000u) != load)
         return 0;
     unsigned long literal_address = address + 8u + (instruction & 0xfffu);
     uint32_t literal_value = *(const uint32_t *)literal_address;
@@ -1145,8 +1148,8 @@ static void *install_pc_ldr_hook(struct installed_hook *hook,
                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (trampoline == MAP_FAILED)
         return 0;
-    trampoline[0] = 0xe59f3008u;                    /* ldr r3,[pc,#8] */
-    trampoline[1] = *(const uint32_t *)(address + 4u); /* push original */
+    trampoline[0] = load | 8u;                      /* ldr rd,[pc,#8] */
+    trampoline[1] = *(const uint32_t *)(address + 4u); /* second instruction */
     trampoline[2] = 0xe51ff004u;                    /* ldr pc,[pc,#-4] */
     trampoline[3] = (uint32_t)(address + 8u);
     trampoline[4] = literal_value;
@@ -2240,7 +2243,7 @@ static void remove_channel_tap(void)
 #include "../../sprites/1.19/rx3_sprites_feature.h"
 #include "../../sidechain/1.19/rx3_sidechain_feature.h"
 #include "../../swang/1.19/rx3_swang_feature.h"
-#include "../../charizard2/1.19/rx3_charizard2_feature.h"
+#include "../../spritefx/1.19/rx3_spritefx_feature.h"
 #include "../../bandpass/1.19/rx3_bandpass_feature.h"
 
 static int hooked_load(void *reader, const void *track_info)

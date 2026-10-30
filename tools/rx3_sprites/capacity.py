@@ -18,9 +18,11 @@ def directory_bytes(path: Path, suffix: str) -> int:
     )
 
 
-def report(sprite_bytes: int, stem_bytes: int = 0) -> str:
-    message = f"sprites {sprite_bytes} bytes, stems {stem_bytes} bytes"
-    if sprite_bytes > MAX_PACK_BYTES:
+def report(pack_bytes: list[int], stem_bytes: int = 0) -> str:
+    """Summarize every pack. The limit applies to each pack, not the total."""
+    total = sum(pack_bytes)
+    message = f"sprites {total} bytes, stems {stem_bytes} bytes"
+    if any(size > MAX_PACK_BYTES for size in pack_bytes):
         return (
             f"{message}; sprite pack exceeds the {MAX_PACK_BYTES} byte per-pack limit"
         )

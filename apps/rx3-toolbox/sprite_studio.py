@@ -24,7 +24,7 @@ import theme
 
 
 class SpriteStudioPane(ttk.Frame):
-    """One source folder in, one RX3_SPRITES directory out."""
+    """One source folder in. Packs already in RX3_SPRITES stay."""
 
     def __init__(self, master: tk.Misc):
         super().__init__(master, padding=16)
@@ -99,7 +99,7 @@ def preview_summary(source: pathlib.Path) -> str:
 
 
 def provision(source: pathlib.Path, destination: pathlib.Path) -> str:
-    return write_sprites(source, destination)
+    return write_sprites([source], destination)
 
 
 def self_test() -> None:

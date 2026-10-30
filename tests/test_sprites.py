@@ -155,7 +155,7 @@ class ProvisionTests(unittest.TestCase):
             self.assertFalse((written / "format.proof").exists())
             self.assertFalse((written / "anchors.proof").exists())
             self.assertEqual((root / "PIONEER" / "keep.txt").read_text(encoding="utf-8"), "leave me")
-            self.assertIn("exceed", report(MAX_PACK_BYTES + 1, 10))
+            self.assertIn("exceed", report([MAX_PACK_BYTES + 1], 10))
             # macOS deletes the AppleDouble sidecar when the real file goes.
             (written / "._catalog.txt").write_bytes(b"resource")
             real_unlink = Path.unlink
@@ -184,11 +184,11 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual(choose(["only.rx3spr"], "demo", 1, 1, "only.rx3spr"), "only.rx3spr")
 
 
-def _source(root: Path) -> None:
+def _source(root: Path, name: str = "squares") -> None:
     _png(root / "a.png", 8, 8, 0)
     manifest = {
         "schema": 1,
-        "name": "squares",
+        "name": name,
         "layout": "sequence",
         "width": 8,
         "height": 8,
@@ -242,6 +242,89 @@ class CliTests(unittest.TestCase):
             self.assertFalse((tree / "tracks.rx3idx").exists())
             self.assertFalse((tree / "format.proof").exists())
             self.assertFalse((tree / "anchors.proof").exists())
+
+    def test_write_merges_a_folder_of_sprites_and_keeps_existing_packs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / "art"
+            one = parent / "one"
+            two = parent / "two"
+            nested = one / "nested"
+            one.mkdir(parents=True)
+            two.mkdir()
+            nested.mkdir()
+            _source(one, "alpha")
+            _source(two, "beta")
+            _source(nested, "hidden")
+            dest = root / "usb"
+            dest.mkdir()
+            self.assertEqual(sprites_main([
+                "write", "--source", str(parent), "--dest", str(dest),
+            ]), 0)
+            tree = dest / "RX3_SPRITES"
+            self.assertEqual(
+                (tree / "catalog.txt").read_text(encoding="utf-8"),
+                "alpha.rx3spr\nbeta.rx3spr\n",
+            )
+            alpha_bytes = (tree / "alpha.rx3spr").read_bytes()
+            gamma = root / "gamma"
+            gamma.mkdir()
+            _source(gamma, "gamma")
+            beta = root / "beta"
+            beta.mkdir()
+            _source(beta, "beta")
+            self.assertEqual(sprites_main([
+                "write", "--source", str(gamma), "--source", str(beta),
+                "--dest", str(dest),
+            ]), 0)
+            self.assertEqual(
+                (tree / "catalog.txt").read_text(encoding="utf-8"),
+                "alpha.rx3spr\nbeta.rx3spr\ngamma.rx3spr\n",
+            )
+            self.assertEqual((tree / "alpha.rx3spr").read_bytes(), alpha_bytes)
+            self.assertFalse((tree / "hidden.rx3spr").exists())
+
+    def test_colliding_names_exit_2(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "a"
+            second = root / "b"
+            first.mkdir()
+            second.mkdir()
+            _source(first, "same")
+            _source(second, "same")
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                code = sprites_main([
+                    "write", "--source", str(first), "--source", str(second),
+                    "--dest", str(root),
+                ])
+            self.assertEqual(code, 2)
+            self.assertIn("collide", stderr.getvalue())
+            self.assertFalse((root / "RX3_SPRITES").exists())
+
+    def test_a_bad_pack_on_the_stick_is_left_in_place(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "art"
+            source.mkdir()
+            _source(source, "alpha")
+            self.assertEqual(sprites_main([
+                "write", "--source", str(source), "--dest", str(root),
+            ]), 0)
+            pack = root / "RX3_SPRITES" / "alpha.rx3spr"
+            pack.write_bytes(b"not a pack")
+            other = root / "beta"
+            other.mkdir()
+            _source(other, "beta")
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                code = sprites_main([
+                    "write", "--source", str(other), "--dest", str(root),
+                ])
+            self.assertEqual(code, 2)
+            self.assertEqual(pack.read_bytes(), b"not a pack")
+            self.assertFalse((root / "RX3_SPRITES" / "beta.rx3spr").exists())
 
 
 class ToolboxTests(unittest.TestCase):

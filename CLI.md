@@ -10,11 +10,14 @@ The sprite command writes `RX3_SPRITES`. It does not write `autoexec.bin`. The r
 ```sh
 python -m tools.rx3_sprites preview --source SOURCE
 python -m tools.rx3_sprites write --source SOURCE --dest DEST
+python -m tools.rx3_sprites write --source ONE --source TWO --dest DEST
 ```
 
-`preview` compiles one source folder in memory. It writes nothing. `write` compiles that folder and replaces `DEST/RX3_SPRITES`.
+`preview` compiles in memory. It writes nothing. `write` compiles and merges into `DEST/RX3_SPRITES`.
 
-`SOURCE` is a folder with `manifest.json` and the frames. `DEST` is the parent of `RX3_SPRITES`. When the pack goes on the stick, use the USB root as `DEST`.
+`SOURCE` is a folder with `manifest.json` and the frames, or a folder whose immediate children are those folders. Repeat `--source` to compile several in one write. `DEST` is the parent of `RX3_SPRITES`. When the packs go on the stick, use the USB root as `DEST`.
+
+Packs already in `DEST/RX3_SPRITES` stay. A compiled pack replaces the stored pack with the same filename. `catalog.txt` is rewritten from the combined set.
 
 Both commands take the same optional flags:
 

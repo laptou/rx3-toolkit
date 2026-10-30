@@ -42,6 +42,35 @@ class Source:
     frames: tuple[Image.Image, ...]
 
 
+def collect_sources(paths: list[Path]) -> list[Path]:
+    """Expand each path to sprite folders.
+
+    A path with manifest.json is one sprite. A directory of those folders is
+    every immediate child that has a manifest. Nested folders are not walked.
+    """
+    folders: list[Path] = []
+    for path in paths:
+        folders.extend(_source_folders(path))
+    return folders
+
+
+def _source_folders(path: Path) -> list[Path]:
+    if (path / "manifest.json").is_file():
+        return [path]
+    if not path.is_dir():
+        raise SourceError(f"cannot read {path}")
+    found = sorted(
+        child
+        for child in path.iterdir()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and (child / "manifest.json").is_file()
+    )
+    if not found:
+        raise SourceError(f"no sprite manifest in {path}")
+    return found
+
+
 def load_source(directory: Path) -> Source:
     manifest_path = directory / "manifest.json"
     try:

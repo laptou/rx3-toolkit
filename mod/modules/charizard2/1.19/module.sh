@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: MPL-2.0
-# Charizard: the TRANS beat fx becomes the charizard sprite.
-# The code lives in the performance core's shared object; this module decides
-# whether it runs. Without the pack, TRANS stays stock.
+# Charizard: TRANS becomes the charizard sprite. The drawing lives in
+# spritefx. This module names the pack and the beat-fx label. Without the
+# pack, TRANS stays stock.
 
 module_begin charizard2 charizard2
 
@@ -16,10 +16,14 @@ charizard2_prepare()
         say "Charizard disabled: RX3_SPRITES/charizard.rx3spr is missing"
         return 0
     fi
-    export RX3_CHARIZARD2=1
-    export RX3_CHARIZARD_PACK="$USB/RX3_SPRITES/charizard.rx3spr"
-    running=$(rbp_environment_value RX3_CHARIZARD2)
-    if [ "$running" != "1" ]; then
+    export RX3_SPRITE_FX=1
+    export RX3_SPRITE_FX_PACK="$USB/RX3_SPRITES/charizard.rx3spr"
+    export RX3_SPRITE_FX_NAME=CHARIZARD
+    running=$(rbp_environment_value RX3_SPRITE_FX)
+    running_name=$(rbp_environment_value RX3_SPRITE_FX_NAME)
+    running_pack=$(rbp_environment_value RX3_SPRITE_FX_PACK)
+    if [ "$running" != "1" ] || [ "$running_name" != "CHARIZARD" ] \
+        || [ "$running_pack" != "$USB/RX3_SPRITES/charizard.rx3spr" ]; then
         say "Charizard needs a restart so TRANS can become CHARIZARD"
         request_rbp_restart
     fi

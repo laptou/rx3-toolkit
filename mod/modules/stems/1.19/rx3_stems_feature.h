@@ -207,7 +207,7 @@ static int stems_feature_install(void)
         (void *)hooked_get_stream);
     original_check_slip_led = (check_slip_led_fn)install_pc_ldr_hook(
         &slip_led_hook, CHECK_SLIP_LED, slip_led_guard,
-        (void *)hooked_check_slip_led);
+        (void *)hooked_check_slip_led, 3u);
     /* the pad broker owns onKey_Pad. without its trampoline, pads 7 and 8
        would have nowhere to fall through. */
     return original_get_stream && original_on_key_pad &&

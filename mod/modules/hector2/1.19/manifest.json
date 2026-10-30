@@ -1,0 +1,19 @@
+{
+  "id": "hector2",
+  "name": "Hector",
+  "description": "TRANS becomes HECTOR. LEVEL/DEPTH sets the sprite size and the channel places it over track 1, track 2, or the middle. The audio stays dry. Needs RX3_SPRITES/hector.rx3spr. Not for use with the sprites module or with Charizard.",
+  "firmware": "1.19",
+  "default": false,
+  "order": 112,
+  "runtime_directory": "hector2",
+  "namespace": "hector2",
+  "requires": ["spritefx"],
+  "conflicts": ["sprites", "charizard2"],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ]
+}
