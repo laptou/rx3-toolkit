@@ -19,12 +19,21 @@ typedef void (*rx3_deck_stream_fn)(unsigned int deck, const void *reader, int po
                                    struct rx3_stereo *output, unsigned int frames);
 /* The master bus before the microphone talkover attenuator. */
 typedef void (*rx3_master_fn)(struct rx3_stereo *output, unsigned int frames);
+/* A deck's channel output, after the fader and the channel's own processing,
+ * just before the master sums it: where a per-deck gain belongs. `channel`
+ * is the native MixerChannel, so the beat fx manager it carries is
+ * reachable; the buffer may be rewritten in place. Channel 1 runs before
+ * channel 2. */
+typedef void (*rx3_channel_fn)(unsigned int deck, void *channel,
+                               struct rx3_stereo *output, unsigned int frames);
 
 struct rx3_audio_service {
     int (*claim_deck_stream)(const void *owner, rx3_deck_stream_fn);
     void (*release_deck_stream)(const void *owner);
     int (*claim_master)(const void *owner, rx3_master_fn);
     void (*release_master)(const void *owner);
+    int (*claim_channel)(const void *owner, rx3_channel_fn);
+    void (*release_channel)(const void *owner);
 };
 extern const struct rx3_audio_service rx3_audio;
 #endif

@@ -37,6 +37,8 @@ static void blink_restart(void) {}
 static int claim_modes(const void *o) { assert(o); if (!step()) return 0; modes++; return 1; }
 static void unregister_owner(const void *o) { assert(o); unregisters++; pad = 0; key = 0; }
 static int shift_held(unsigned c) { (void)c; return 0; }
+static unsigned channels;
+static rx3_channel_fn channel;
 static int claim_stream(const void *o, rx3_deck_stream_fn f) { assert(o && f); if (!step()) return 0; streams++; stream = f; return 1; }
 static void release_stream(const void *o) { assert(o); releases++; stream = 0; }
 static int claim_master(const void *o, rx3_master_fn f) { assert(o && f); if (!step()) return 0; masters++; master = f; return 1; }
@@ -69,7 +71,9 @@ static const struct rx3_input_service input = {.register_pad = register_pad, .re
     .register_lights = register_lights, .claim_mode_keys = claim_modes,
     .unregister_owner = unregister_owner, .shift_held = shift_held,
     .blink_on = blink_on, .blink_restart = blink_restart};
-static const struct rx3_audio_service audio = {claim_stream, release_stream, claim_master, release_master};
+static int claim_channel(const void *o, rx3_channel_fn f) { assert(o && f); if (!step()) return 0; channels++; channel = f; return 1; }
+static void release_channel(const void *o) { assert(o); releases++; channel = 0; }
+static const struct rx3_audio_service audio = {claim_stream, release_stream, claim_master, release_master, claim_channel, release_channel};
 static const struct rx3_services services = {.log_line = quiet, .log_number = quiet_number,
     .panels = &panels, .input = &input, .audio = &audio, .memory = &memory_mock,
     .provide_mix = provide_mix, .withdraw_mix = withdraw_mix,

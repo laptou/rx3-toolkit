@@ -101,7 +101,10 @@
     "services/rx3_loader.c",
     "api/rx3_overlay_api.h",
     "services/rx3_overlays.c",
-    "services/rx3_overlays.h"
+    "services/rx3_overlays.h",
+    "api/rx3_beatfx_api.h",
+    "services/rx3_beatfx.c",
+    "services/rx3_beatfx.h"
   ],
   "arm_hook": {
     "source": "rx3_core_hook.c",
@@ -135,7 +138,9 @@
       "samples/rx3_samples_module.c",
       "core/services/rx3_loader.c",
       "core/services/rx3_overlays.c",
-      "sprites/rx3_sprites_module.c"
+      "sprites/rx3_sprites_module.c",
+      "core/services/rx3_beatfx.c",
+      "sidechain/rx3_sidechain_module.c"
     ]
   },
   "advanced": true

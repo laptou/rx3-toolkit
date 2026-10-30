@@ -17,9 +17,16 @@ static const uint8_t stream_guard[8] = {0xf8,0x40,0x2d,0xe9,0x00,0x40,0xa0,0xe1}
 /* The master bus, just before the microphone talkover attenuator. */
 #define MIC_TALKOVER ((unsigned long)0x0009c750)
 static const uint8_t master_guard[8] = {0x03,0xc0,0xd0,0xe5,0x04,0x40,0x2d,0xe5};
+/* MixerChannel::updateFilter runs every block per deck and leaves the
+   post-fader output at channel +0x20, which the master then sums. +0x210 is
+   the deck the beat fx channel selector compares against (0 or 1; aux and
+   mic are other values). */
+#define MIXER_CHANNEL_UPDATE_FILTER ((unsigned long)0x0009e3fc)
+static const uint8_t channel_guard[8] = {0xf0,0x41,0x2d,0xe9,0x00,0x40,0xa0,0xe1};
 
 typedef unsigned long (*stream_fn)(void *, unsigned long, struct rx3_stereo *, unsigned long);
 typedef void (*talkover_fn)(void *, void *, struct rx3_stereo *, int);
+typedef void (*update_filter_fn)(void *, int);
 
 struct stage {
     struct installed_hook hook;
@@ -28,8 +35,10 @@ struct stage {
     void *client;
     unsigned int active;
 };
-static struct stage deck_stage, master_stage;
+static struct stage deck_stage, master_stage, channel_stage;
 static void *volatile deck_readers[2];
+
+typedef void (*update_filter_fn)(void *, int);
 
 static void drain(struct stage *stage)
 {
@@ -94,6 +103,23 @@ static void release(struct stage *stage, const void *owner)
     stage->original = 0;
 }
 
+/* After the original: the block the master will sum is the channel's own
+   post-fader output, already applied to the player's channel object. */
+static void channel_hooked(void *channel, int frames)
+{
+    __atomic_add_fetch(&channel_stage.active, 1u, __ATOMIC_SEQ_CST);
+    ((update_filter_fn)channel_stage.original)(channel, frames);
+    rx3_channel_fn client = __atomic_load_n(&channel_stage.client, __ATOMIC_SEQ_CST);
+    if (client && channel && frames > 0) {
+        unsigned int deck = *(const unsigned int *)((const uint8_t *)channel + 0x210u);
+        struct rx3_stereo *output =
+            *(struct rx3_stereo **)((uint8_t *)channel + 0x20u);
+        if (deck < 2u && output)
+            client(deck, channel, output, (unsigned int)frames);
+    }
+    __atomic_sub_fetch(&channel_stage.active, 1u, __ATOMIC_SEQ_CST);
+}
+
 static int claim_deck_stream(const void *owner, rx3_deck_stream_fn client)
 {
     return claim(&deck_stage, owner, (void *)client, TIMESTRETCH_STREAM, stream_guard,
@@ -106,6 +132,12 @@ static int claim_master(const void *owner, rx3_master_fn client)
                  (void *)master_hooked);
 }
 static void release_master(const void *owner) { release(&master_stage, owner); }
+static int claim_channel(const void *owner, rx3_channel_fn client)
+{
+    return claim(&channel_stage, owner, (void *)client, MIXER_CHANNEL_UPDATE_FILTER,
+                 channel_guard, (void *)channel_hooked);
+}
+static void release_channel(const void *owner) { release(&channel_stage, owner); }
 
 /* PcmReader::load runs on the native loading thread. The old reader stops
    naming a deck before the load; the new one only after it. */
@@ -126,9 +158,11 @@ int rx3_audio_deck_for_reader(const void *reader)
 }
 unsigned int rx3_audio_count(void)
 {
-    return (deck_stage.owner != 0) + (master_stage.owner != 0);
+    return (deck_stage.owner != 0) + (master_stage.owner != 0) +
+           (channel_stage.owner != 0);
 }
 
 const struct rx3_audio_service rx3_audio = {
-    claim_deck_stream, release_deck_stream, claim_master, release_master
+    claim_deck_stream, release_deck_stream, claim_master, release_master,
+    claim_channel, release_channel
 };
