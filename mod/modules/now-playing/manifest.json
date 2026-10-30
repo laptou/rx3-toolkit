@@ -30,6 +30,7 @@
   ],
   "build_files": [
     "rx3_now_playing_decl.h",
+    "rx3_now_playing_tags.h",
     "rx3_now_playing_feature.h",
     "rx3_now_playing_module.c"
   ],

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 # Now playing
 
-Sends what each deck is playing to the computer plugged into the rear USB-B port: the title, the track id, the BPM, the tempo and whether the channel is on air. Use it for a stream overlay, a VJ screen or a set list, while the RX3 plays standalone, with no rekordbox and no PRO DJ LINK.
+Sends what each deck is playing to the computer plugged into the rear USB-B port: the title, the artist, the comment, the track id, the BPM, the tempo and whether the channel is on air. Use it for a stream overlay, a VJ screen or a set list, while the RX3 plays standalone, with no rekordbox and no PRO DJ LINK.
 
 Off by default. Tick it on the Modules screen, build, and on the computer run:
 
@@ -15,16 +15,19 @@ One JSON datagram to UDP port 50123, on the directed broadcast of the link-local
 
     {"type":"now-playing","version":1,"sequence":42,"reason":"change",
      "decks":[{"deck":1,"loaded":true,"onAir":true,"trackId":1234,
-               "bpmX100":12800,"tempoRaw":0,"playModeRaw":3,"title":"..."},
+               "bpmX100":12800,"tempoRaw":0,"playModeRaw":3,
+               "title":"...","artist":"...","comment":"..."},
               {"deck":2,"loaded":false, ...}]}
 
 `reason` is `start`, `change` or `heartbeat`. `scripts/now_playing.py` adds `bpm` in beats per minute.
+
+The artist and the comment are read from the loaded file's tags, on the worker: ID3v2 for MP3, the same ID3 chunk or the native field for WAV and AIFF, and the `ilst` atoms for MP4/AAC. The player's own DB record carries only the id, the title and the path, which is why they are read from the file.
 
 ## What is not established yet
 
 - Nothing here has run on hardware. The event hooks and accessors are checked against the 1.19 player binary, not yet observed on a deck.
 - `tempoRaw` and `playModeRaw` are sent as the player stores them. Which values mean playing, paused or cued, and the unit of the tempo, wait for a capture on a deck.
-- The artist, the album and the key are not sent: where the standalone player keeps them has not been found.
+- The album and the key are not sent.
 - `trackId` is the id the player loaded the track with, not yet shown to be stable across exports.
 - The datagrams are not authenticated. Anything on the USB link can read them, and anything on it could send look-alikes to a listener.
 

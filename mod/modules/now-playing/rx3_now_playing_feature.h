@@ -2,20 +2,32 @@
  * Now playing implementation of the core runtime-feature lifecycle.
  *
  * The hooks run on the player's own threads, so they do the least they can: a
- * load copies the title and track id into a per-deck record, and every event
- * sets a bit and wakes the worker. The worker owns everything else: the
- * player's accessors, the text of the datagram and the socket. A slow or absent
- * computer therefore never holds up the player.
+ * load copies the title, the track id and the path into a per-deck record, and
+ * every event sets a bit and wakes the worker. The worker owns everything
+ * else: the player's accessors, the file's tags, the text of the datagram and
+ * the socket. A slow or absent computer therefore never holds up the player.
  */
 
 #ifndef RX3_NOW_PLAYING_FEATURE_H
 #define RX3_NOW_PLAYING_FEATURE_H
+
+#include "rx3_now_playing_tags.h"
 
 struct now_playing_deck {
     volatile unsigned int revision;  /* odd while a load is writing */
     uint8_t  loaded;
     uint32_t track_id;
     uint16_t title[NOW_PLAYING_TITLE_UNITS];
+    char     path[NOW_PLAYING_PATH_BYTES];
+};
+
+/* The tags are read once per track, on the worker, and kept here so a
+   heartbeat does not open the file again. */
+struct now_playing_tag_state {
+    uint32_t track_id;
+    int      tried;
+    uint16_t artist[NOW_PLAYING_ARTIST_UNITS];
+    uint16_t comment[NOW_PLAYING_COMMENT_UNITS];
 };
 
 static struct installed_hook now_playing_status_hook;
@@ -28,6 +40,7 @@ static now_playing_unload_fn original_now_playing_unload;
 static now_playing_mixer_fn  original_now_playing_mixer;
 
 static struct now_playing_deck now_playing_decks[2];
+static struct now_playing_tag_state now_playing_tags_state[2];
 static volatile unsigned int now_playing_pending;
 static unsigned int now_playing_callbacks;
 static volatile int now_playing_running;
@@ -83,12 +96,17 @@ static int hooked_now_playing_load(void *player, const void *music)
     memcpy(&deck->track_id, (const uint8_t *)music + NOW_PLAYING_MUSIC_ID,
            sizeof(deck->track_id));
     deck->loaded = deck->track_id != 0u;
-    if (deck->loaded)
+    if (deck->loaded) {
         memcpy(deck->title, (const uint8_t *)music + NOW_PLAYING_MUSIC_TITLE,
                sizeof(deck->title));
-    else
+        memcpy(deck->path, (const uint8_t *)music + NOW_PLAYING_MUSIC_PATH,
+               sizeof(deck->path));
+    } else {
         memset(deck->title, 0, sizeof(deck->title));
+        memset(deck->path, 0, sizeof(deck->path));
+    }
     deck->title[NOW_PLAYING_TITLE_UNITS - 1u] = 0;
+    deck->path[NOW_PLAYING_PATH_BYTES - 1u] = 0;
     __sync_synchronize();
     (void)__sync_add_and_fetch(&deck->revision, 1u);
     now_playing_signal(1u << (unsigned int)index);
@@ -109,11 +127,12 @@ static void hooked_now_playing_unload(void *player, int result, unsigned int dev
         ((now_playing_current_track_fn)NOW_PLAYING_CURRENT_TRACK)(player, 0))
         goto done;
     struct now_playing_deck *deck = &now_playing_decks[index];
-    int changed = deck->loaded || deck->track_id || deck->title[0];
+    int changed = deck->loaded || deck->track_id || deck->title[0] || deck->path[0];
     (void)__sync_add_and_fetch(&deck->revision, 1u);
     deck->loaded = 0u;
     deck->track_id = 0u;
     memset(deck->title, 0, sizeof(deck->title));
+    memset(deck->path, 0, sizeof(deck->path));
     __sync_synchronize();
     (void)__sync_add_and_fetch(&deck->revision, 1u);
     if (changed)
@@ -179,16 +198,17 @@ static void now_playing_signed(struct now_playing_text *text, int value)
                          value < 0);
 }
 
-/* The player keeps titles as UTF-16. JSON wants UTF-8 with quotes, backslashes
+/* The player keeps text as UTF-16. JSON wants UTF-8 with quotes, backslashes
    and control characters escaped; an unpaired surrogate becomes U+FFFD. */
-static void now_playing_title(struct now_playing_text *text, const uint16_t *title)
+static void now_playing_json_text(struct now_playing_text *text,
+                                  const uint16_t *value, unsigned int units)
 {
     now_playing_put(text, "\"", 1u);
-    for (unsigned int i = 0; i < NOW_PLAYING_TITLE_UNITS && title[i]; i++) {
-        uint32_t point = title[i];
-        if (point >= 0xd800u && point <= 0xdbffu && i + 1u < NOW_PLAYING_TITLE_UNITS &&
-            title[i + 1u] >= 0xdc00u && title[i + 1u] <= 0xdfffu)
-            point = 0x10000u + ((point - 0xd800u) << 10u) + (title[++i] - 0xdc00u);
+    for (unsigned int i = 0; i < units && value[i]; i++) {
+        uint32_t point = value[i];
+        if (point >= 0xd800u && point <= 0xdbffu && i + 1u < units &&
+            value[i + 1u] >= 0xdc00u && value[i + 1u] <= 0xdfffu)
+            point = 0x10000u + ((point - 0xd800u) << 10u) + (value[++i] - 0xdc00u);
         else if (point >= 0xd800u && point <= 0xdfffu)
             point = 0xfffdu;
 
@@ -238,9 +258,40 @@ static void now_playing_read_deck(unsigned int index, struct now_playing_deck *c
         copy->loaded = deck->loaded;
         copy->track_id = deck->track_id;
         memcpy(copy->title, deck->title, sizeof(copy->title));
+        memcpy(copy->path, deck->path, sizeof(copy->path));
         __sync_synchronize();
         if (deck->revision == before)
             return;
+    }
+}
+
+static const uint16_t *now_playing_tag_text(unsigned int index,
+                                            struct now_playing_tags *tags,
+                                            int comment)
+{
+    struct now_playing_tag_state *state = &now_playing_tags_state[index];
+    if (comment)
+        return state->tried ? state->comment : tags->comment;
+    return state->tried ? state->artist : tags->artist;
+}
+
+/* Read the file's tags once for this track. A missing or unreadable file is
+   the ordinary case when the drive was pulled; the fields stay empty. */
+static void now_playing_load_tags(unsigned int index, const char *path,
+                                  uint32_t track_id,
+                                  struct now_playing_tags *tags)
+{
+    struct now_playing_tag_state *state = &now_playing_tags_state[index];
+    memset(tags, 0, sizeof(*tags));
+    if (state->tried && state->track_id == track_id)
+        return;
+    state->track_id = track_id;
+    state->tried = 1;
+    memset(state->artist, 0, sizeof(state->artist));
+    memset(state->comment, 0, sizeof(state->comment));
+    if (path[0] && np_read_tags(path, tags)) {
+        memcpy(state->artist, tags->artist, sizeof(state->artist));
+        memcpy(state->comment, tags->comment, sizeof(state->comment));
     }
 }
 
@@ -259,7 +310,12 @@ static void now_playing_send(const char *reason)
     now_playing_literal(&text, "\",\"decks\":[");
     for (unsigned int index = 0; index < 2u; index++) {
         struct now_playing_deck deck;
+        struct now_playing_tags tags;
         now_playing_read_deck(index, &deck);
+        if (deck.loaded)
+            now_playing_load_tags(index, deck.path, deck.track_id, &tags);
+        else
+            memset(&tags, 0, sizeof(tags));
         int bpm = ((now_playing_deck_int_fn)NOW_PLAYING_PLAY_BPM)(index);
         if (!deck.loaded || bpm < 0 || bpm == 0xffff)
             bpm = 0;
@@ -280,7 +336,17 @@ static void now_playing_send(const char *reason)
         now_playing_signed(&text,
             ((now_playing_deck_int_fn)NOW_PLAYING_PLAY_MODE)(index));
         now_playing_literal(&text, ",\"title\":");
-        now_playing_title(&text, deck.loaded ? deck.title : now_playing_no_title);
+        now_playing_json_text(&text,
+            deck.loaded ? deck.title : now_playing_no_title,
+            NOW_PLAYING_TITLE_UNITS);
+        now_playing_literal(&text, ",\"artist\":");
+        now_playing_json_text(&text,
+            deck.loaded ? now_playing_tag_text(index, &tags, 0) : now_playing_no_title,
+            NOW_PLAYING_ARTIST_UNITS);
+        now_playing_literal(&text, ",\"comment\":");
+        now_playing_json_text(&text,
+            deck.loaded ? now_playing_tag_text(index, &tags, 1) : now_playing_no_title,
+            NOW_PLAYING_COMMENT_UNITS);
         now_playing_literal(&text, "}");
     }
     now_playing_literal(&text, "]}\n");
