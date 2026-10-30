@@ -9,7 +9,7 @@ The application selects this dependency when a module needs shared in-process se
 | --- | --- |
 | `api/` | Public module and service contracts, opaque handle types, DSP kernels and ARM ABI declarations. Modules include nothing else from the core. |
 | `runtime/` | Module composition, startup, shutdown and lifecycle dispatch. |
-| `services/` | Hook ownership, logging, notification queue, mix observations, reusable DSP, and the shared input, audio, image, memory and loading services. |
+| `services/` | Hook ownership, logging, notification queue, mix observations, reusable DSP, overlay windows, and the shared input, audio, image, memory and loading services. |
 | `firmware/` | ARM code patching and the adapter to rbp's native caution messages. |
 | `ui/` | Panel layout, atlas, widgets and translated notice text. |
 | `diagnostics/` | Render probe record format. |

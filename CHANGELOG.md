@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- Add overlay windows to the module API (version 19). `services->overlays` claims one of the four free z slots under the waveform, hands a module its pixels and pitch, and marks the window for the compositor; `deck_rect` returns one deck's strip so no module types firmware geometry, and `watch_draw` says when the player has drawn, which is where a window paints. The core owns creation, the magenta colour key, destruction and the draw dispatch from its existing render hook, so an overlay adds no native hook. Nothing claims one yet; the sprite features that need it are not ported. Host tests and the ARM build only; window creation and compositing still need the hardware acceptance sequence.
+
 - Now playing sends each track's artist and comment beside the title. The player's own DB record holds only the id, the title and the path, so the worker reads the tags from the loaded file once per track: ID3v2 for MP3, the native field or ID3 chunk for WAV and AIFF, and the `ilst` atoms for MP4/AAC. Both are additive fields in the existing `version: 1` datagram, so a listener that ignores them keeps working. Host tests only; not yet run on hardware.
 
 - The third BROWSE column reads less from the USB drive: only the value it shows (BPM, duration, artist or key), instead of the artist and key for every track. Emulator measurement: about 70% less work per track, identical display. First RX3 test with a 980-track USB drive: scrolling clearly faster.

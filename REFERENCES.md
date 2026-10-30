@@ -3129,6 +3129,36 @@ module's start, failure and stop paths against mock services. None of this
 has run on an RX3: pad and LED behaviour, audio timing and live hook
 replacement still need the hardware acceptance sequence.
 
+<a id="doc-runtime-framework--overlay-windows-api-version-19"></a>
+##### Overlay windows (API version 19)
+
+`services->overlays` is the one way a module puts its own pixels above the
+player's layers. rbp draws the scrolling waveforms into a private `ds_gr`
+window that its compositor keeps above every `ns` window, so neither the image
+tables nor a pad row can reach those 892x444 pixels; a sprite over a deck's
+waveform or a meter between them needs a window of its own with a lower z,
+which is what the player's own play mode does.
+
+The core owns the four free z slots under the waveform (`0x3e` to `0x3b`), the
+magenta colour key, window creation and destruction. A module owns the
+contents and the lifetime of the windows it claims: `claim` with a rectangle
+and a stacking side, `lock` for pixels and pitch, then `present` or `discard`,
+all on the render thread. `deck_rect` returns one deck's strip so no module
+types firmware geometry. `release` destroys the caller's windows and drops its
+watcher after the module's callbacks have drained.
+
+A window paints nothing until the module knows the player has drawn, so
+`watch_draw` registers one render-thread watcher per owner and the core calls
+it with each drawn image id after the image service sees it; the scrolling
+waveform is `0x159a`. The core dispatches that from the existing draw hook, so
+an overlay costs no extra native hook. Claims from opposite ends keep one
+module's stacking independent of the order modules start in.
+
+This is host-built only. Window creation, compositing order, the colour key
+and the redraw cadence still need the hardware acceptance sequence, and a
+claim is refused rather than retried when the player will not create the
+window.
+
 ---
 
 <a id="doc-runtime-reinsertion-plan"></a>

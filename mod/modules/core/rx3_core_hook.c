@@ -79,6 +79,7 @@
 #include "services/rx3_browse.h"
 #include "services/rx3_input.h"
 #include "services/rx3_audio.h"
+#include "services/rx3_overlays.h"
 
 #include "diagnostics/rx3_probe_format.h"
 #include "ui/rx3_pad_layout.h"
@@ -1048,6 +1049,9 @@ static void hooked_draw_image(void *render, void *image)
     memcpy(&image_id, (const uint8_t *)image + 0x44u, sizeof(image_id));
     if (title_draw_eye(render,image)) return;
     rx3_image_drawn(image_id);
+    /* A module's overlay window paints nothing until its watcher says the
+       player has drawn, so this is where it is told. */
+    rx3_overlays_drawn(image_id);
 
     /* Capture the native 180x50 model, including its renderer/window
        attachment. A status panel replaces STATUS only while it is registered.

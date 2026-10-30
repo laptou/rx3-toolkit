@@ -14,7 +14,8 @@
 #include "rx3_audio_api.h"
 #include "rx3_memory_api.h"
 #include "rx3_loader_api.h"
-#define RX3_MODULE_API_VERSION 18u
+#include "rx3_overlay_api.h"
+#define RX3_MODULE_API_VERSION 19u
 /* Static composition contract, not a promise of a stable dynamic ABI.
  * All descriptors have process lifetime. Startup is serial and explicit.
  * A failed start is followed by stop, including partial installation.
@@ -66,6 +67,9 @@ struct rx3_services {
                             unsigned int format, uint8_t *out, unsigned int count));
     void (*withdraw_waveform)(unsigned int (*)(unsigned int deck, unsigned int mask,
                               unsigned int format, uint8_t *out, unsigned int count));    const struct rx3_loader_service *loader;
+    /* Windows above the player's own layers, for pixels the image tables
+       cannot reach. Appended in API 19. */
+    const struct rx3_overlay_service *overlays;
 };
 struct rx3_module {
     unsigned int version;
