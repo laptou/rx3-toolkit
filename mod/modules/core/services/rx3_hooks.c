@@ -62,9 +62,10 @@ static void *install_raw_hook(struct hook_record *hook, unsigned long address,
 }
 
 
-/* Variant for ldr r3,[pc,#imm12] followed by push. The trampoline loads a copy
-   of the original literal value, replays push, and joins address+8. This
-   preserves r3 without depending on the shared object's mapped address. */
+/* Variant for ldr rd,[pc,#imm12] followed by one more instruction. The
+   trampoline reloads rd from a copied literal, replays that instruction,
+   and joins address+8, so the literal does not depend on where this object
+   is mapped. rd is whichever register the prologue loads, never pc. */
 static void *install_raw_pc_ldr_hook(struct hook_record *hook,
                                  unsigned long address,
                                  const uint8_t guard[8], void *replacement)
@@ -73,7 +74,9 @@ static void *install_raw_pc_ldr_hook(struct hook_record *hook,
         return 0;
 
     uint32_t instruction = *(const uint32_t *)address;
-    if ((instruction & 0xfffff000u) != 0xe59f3000u)
+    unsigned rd = (instruction >> 12) & 15u;
+    /* ldr rd,[pc,#imm12] with the always condition, any register but pc. */
+    if ((instruction & 0xffff0000u) != 0xe59f0000u || rd == 15u)
         return 0;
     unsigned long literal_address = address + 8u + (instruction & 0xfffu);
     uint32_t literal_value = *(const uint32_t *)literal_address;
@@ -82,8 +85,8 @@ static void *install_raw_pc_ldr_hook(struct hook_record *hook,
                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (trampoline == MAP_FAILED)
         return 0;
-    trampoline[0] = 0xe59f3008u;                    /* ldr r3,[pc,#8] */
-    trampoline[1] = *(const uint32_t *)(address + 4u); /* push original */
+    trampoline[0] = 0xe59f0008u | (rd << 12);        /* ldr rd,[pc,#8] */
+    trampoline[1] = *(const uint32_t *)(address + 4u); /* the next instruction */
     trampoline[2] = 0xe51ff004u;                    /* ldr pc,[pc,#-4] */
     trampoline[3] = (uint32_t)(address + 8u);
     trampoline[4] = literal_value;

@@ -2,12 +2,15 @@
 #ifndef RX3_AUDIO_API_H
 #define RX3_AUDIO_API_H
 #include "rx3_platform.h"
-/* Typed audio stages. Each stage has one owner at a time; a second claim
- * fails without replacing the first. Processing runs on the player's audio
- * threads and must not allocate, perform I/O or wait. The core counts callers
- * in flight: release() detaches the native hook, drains admitted callbacks
- * and only then returns, so it must not be called from a callback. Buffers
- * belong to the player and are valid only during the call.
+/* Typed audio stages. The master and channel stages have one owner at a
+ * time; a second claim fails without replacing the first. The deck stream
+ * carries a small chain instead, because it is observation as often as
+ * processing: every client is called after the original, and registration is
+ * once per owner for the process lifetime. Processing runs on the player's
+ * audio threads and must not allocate, perform I/O or wait. The core counts
+ * callers in flight: release() detaches the native hook, drains admitted
+ * callbacks and only then returns, so it must not be called from a callback.
+ * Buffers belong to the player and are valid only during the call.
  */
 struct rx3_stereo { float left, right; };
 
@@ -34,6 +37,12 @@ struct rx3_audio_service {
     void (*release_master)(const void *owner);
     int (*claim_channel)(const void *owner, rx3_channel_fn);
     void (*release_channel)(const void *owner);
+    /* The playhead's place on the deck's own beat grid, in beats with bar
+       downbeats on multiples of 4, walked from the reader the service
+       resolved the deck by. `position` is the same frame the deck stream
+       reports. Any thread; zero when the deck has no grid or the walk raced
+       a track load. */
+    int (*beat_at)(unsigned int deck, long position, double *beat);
 };
 extern const struct rx3_audio_service rx3_audio;
 #endif

@@ -140,7 +140,8 @@
       "core/services/rx3_overlays.c",
       "sprites/rx3_sprites_module.c",
       "core/services/rx3_beatfx.c",
-      "sidechain/rx3_sidechain_module.c"
+      "sidechain/rx3_sidechain_module.c",
+      "swang/rx3_swang_module.c"
     ]
   },
   "advanced": true

@@ -73,7 +73,8 @@ static const struct rx3_input_service input = {.register_pad = register_pad, .re
     .blink_on = blink_on, .blink_restart = blink_restart};
 static int claim_channel(const void *o, rx3_channel_fn f) { assert(o && f); if (!step()) return 0; channels++; channel = f; return 1; }
 static void release_channel(const void *o) { assert(o); releases++; channel = 0; }
-static const struct rx3_audio_service audio = {claim_stream, release_stream, claim_master, release_master, claim_channel, release_channel};
+static int mock_beat_at(unsigned d, long p, double *b) { (void)d;(void)p;(void)b; return 0; }
+static const struct rx3_audio_service audio = {claim_stream, release_stream, claim_master, release_master, claim_channel, release_channel, mock_beat_at};
 static const struct rx3_services services = {.log_line = quiet, .log_number = quiet_number,
     .panels = &panels, .input = &input, .audio = &audio, .memory = &memory_mock,
     .provide_mix = provide_mix, .withdraw_mix = withdraw_mix,

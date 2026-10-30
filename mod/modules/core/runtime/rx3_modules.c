@@ -16,7 +16,7 @@ static struct rx3_services services = {
     install_hook, uninstall_hook, log_line, rx3_mix_read, &rx3_notices, &rx3_dsp, &rx3_panels, rx3_wave_read, detach_hook, release_hook, &rx3_images, &rx3_browse, &rx3_titles,
     &rx3_input, &rx3_audio, rx3_log_number, &rx3_memory, 0,
     rx3_mix_claim, rx3_mix_release, rx3_wave_claim, rx3_wave_release, &rx3_loader,
-    &rx3_overlays, &rx3_beatfx
+    &rx3_overlays, &rx3_beatfx, install_pc_ldr_hook
 };
 void rx3_modules_bind_writer(int (*writer)(unsigned long, const void *, const void *, unsigned int))
 {

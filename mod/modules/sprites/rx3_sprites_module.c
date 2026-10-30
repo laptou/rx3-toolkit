@@ -4,7 +4,6 @@
  * overlay window it draws into and the hooks that tell it when. */
 #include "../core/api/rx3_module_api.h"
 static const struct rx3_services *framework;
-#include "rx3_sprites_decl.h"
 #include "rx3_sprites_feature.h"
 
 static int sprites_configured(void)

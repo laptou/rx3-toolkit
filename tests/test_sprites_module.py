@@ -22,7 +22,6 @@ class SpriteModuleTests(unittest.TestCase):
         cls.feature = (base / "rx3_sprites_feature.h").read_text()
         cls.menu = (base / "rx3_sprites_menu.h").read_text()
         cls.pads = (base / "rx3_sprites_pads.h").read_text()
-        cls.decl = (base / "rx3_sprites_decl.h").read_text()
         cls.manifest = json.loads((base / "manifest.json").read_text())
         cls.overlays = (MODULES / "core/services/rx3_overlays.c").read_text()
         cls.composition = (MODULES / "core/runtime/rx3_composition.c").read_text()
@@ -155,13 +154,11 @@ class SpriteModuleTests(unittest.TestCase):
         # the hold.
         self.assertNotIn("original_util_enter_menu(item)", self.menu)
 
-    def test_the_beat_grid_is_walked_from_the_deck_reader(self):
-        for needle in (
-            "SPRITE_BEAT_GRID 0x69cu",
-            "sprite_readers[deck] = reader;",
-            "sprite_deck_beat(deck, position, &beat)",
-        ):
-            self.assertIn(needle, self.decl + self.feature)
+    def test_the_beat_phase_comes_from_the_audio_service(self):
+        self.assertIn("framework->audio->beat_at(deck, position, &beat)",
+                      self.feature)
+        # the walk itself belongs to the core now
+        self.assertNotIn("0x69cu", self.feature)
 
     def test_audio_stages_and_watcher_are_claimed_and_released(self):
         for needle in (
@@ -178,7 +175,6 @@ class SpriteModuleTests(unittest.TestCase):
         self.assertIn("sprites/rx3_sprites_module.c",
                       self.core_manifest["arm_hook"]["sources"])
         self.assertIn("rx3_sprites_module.c", self.manifest["build_files"])
-        self.assertIn("rx3_sprites_decl.h", self.manifest["build_files"])
         self.assertEqual(self.manifest["requires"], ["core"])
         self.assertEqual(self.manifest["category"], "screen")
 

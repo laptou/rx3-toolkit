@@ -1,0 +1,35 @@
+{
+  "id": "swang",
+  "name": {
+    "en": "Swing",
+    "fr": "Swing"
+  },
+  "description": {
+    "en": "Turn the SPIRAL beat fx into a swing locked to the tempo master's beat grid. DEPTH is the strength, the BEAT arrows the swung note, TIME the phase. Shorter dimmer ticks land where the swung off-beats fall.",
+    "fr": "Transforme l'effet SPIRAL en swing calé sur la grille du deck maître. DEPTH est la force, les flèches BEAT la note jouée, TIME le décalage. Des repères plus courts apparaissent où tombent les contretemps."
+  },
+  "firmwares": [
+    "1.19"
+  ],
+  "default": false,
+  "order": 62,
+  "category": "beatjump",
+  "runtime_directory": "swang",
+  "namespace": "swang",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_swang_dsp.h",
+    "rx3_swang_feature.h",
+    "rx3_swang_module.c"
+  ]
+}

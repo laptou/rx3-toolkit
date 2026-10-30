@@ -73,6 +73,11 @@ struct rx3_services {
     const struct rx3_overlay_service *overlays;
     /* The beat fx the player runs, for a module that owns one. API 20. */
     const struct rx3_beatfx_service *beatfx;
+    /* The literal-relocating hook installer, for a module whose own guarded
+       hook sits on a PC-relative load: the plain installer cannot preserve
+       the loaded register. API 20. */
+    void *(*install_pc_ldr_hook)(struct installed_hook *, unsigned long,
+                                 const uint8_t[8], void *);
 };
 struct rx3_module {
     unsigned int version;

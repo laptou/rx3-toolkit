@@ -19,7 +19,6 @@
 #ifndef RX3_SPRITES_FEATURE_H
 #define RX3_SPRITES_FEATURE_H
 
-#include "rx3_sprites_decl.h"
 #include "rx3_sprites_logic.h"
 
 #define SPRITE_PACK_LIMIT 64u
@@ -839,11 +838,11 @@ static void sprites_deck_stream(unsigned deck, const void *reader, int position,
     double beat;
     (void)output;
     (void)frames;
+    (void)reader;
     if (deck >= 2u)
         return;
-    sprite_readers[deck] = reader;
     sprite_decks[deck].position = position;
-    if (sprite_deck_beat(deck, position, &beat)) {
+    if (!framework->audio->beat_at(deck, position, &beat)) {
         sprite_decks[deck].have_phase = 0;
         return;
     }

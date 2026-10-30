@@ -254,14 +254,18 @@ static void *original_for(unsigned long a) {
 }
 static unsigned deck_seen = 9; static int position_seen;
 static void deck_client(unsigned d, const void *r, int p, struct rx3_stereo *o, unsigned n) {
-    (void)r; (void)n; deck_seen = d; position_seen = p; assert(o[0].left == 1); /* after the stream */
+    (void)r; (void)n; deck_seen = d; position_seen = p; assert(o[0].left >= 1); /* after the stream */
     o[0].left = 2;
 }
 static void master_client(struct rx3_stereo *o, unsigned n) { (void)n; o[0].left += 0.5f; }
 static const char owner = 0, other = 0;
 int main(void) {
     assert(rx3_audio.claim_deck_stream(&owner, deck_client));
-    assert(!rx3_audio.claim_deck_stream(&other, deck_client));
+    /* The same owner twice is refused; a different owner joins the chain,
+       because the deck stream is observation as often as processing:
+       sprites and swang both read it. */
+    assert(!rx3_audio.claim_deck_stream(&owner, deck_client));
+    assert(rx3_audio.claim_deck_stream(&other, deck_client));
     unsigned long (*stream)(void *, unsigned long, struct rx3_stereo *, unsigned long) = hooked(0x000c292cu);
     /* ARM32 layout: the reader pointer sits at byte 4 of TimeStretch. */
     int reader = 0; uint8_t stretch[16] = {0}; void *pointer = &reader; memcpy(stretch + 4, &pointer, sizeof(pointer));
@@ -279,6 +283,8 @@ int main(void) {
     /* Only the owner releases; release detaches, drains and frees. */
     rx3_audio.release_master(&other); assert(!detached);
     rx3_audio.release_master(&owner); assert(detached == 1 && released == 1);
+    /* Both clients must go before the deck hook is released. */
+    rx3_audio.release_deck_stream(&other); assert(detached == 1);
     rx3_audio.release_deck_stream(&owner); assert(detached == 2 && released == 2);
     assert(rx3_audio.claim_deck_stream(&other, deck_client) && installed == 3);
     return 0;

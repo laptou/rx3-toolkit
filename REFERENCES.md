@@ -2826,6 +2826,7 @@ their hooks and drain admitted native callbacks before releasing trampolines.
 | Now Playing | Worker, sockets, player observations | Hooks, logging |
 | Samples | Bank, settings, voices, pad policy, pad colours, panel | Input (pads, SHIFT, pad lights, mode keys), master audio stage, panels, memory, loader |
 | Sidechain | Compression maths, ratio state, key filters, the meter, the ratio's beat label | Beat fx (operate, BEAT arrows, info block), audio channel stage, overlays (meter window, draw watcher, wave query) |
+| Swang | Swing warp maths, note and phase state, the waveform tick scan | Beat fx (operate, BEAT arrows, TIME knob, info block), audio deck stream and grid walk, pc-ldr installer |
 | Search Latin | Transliteration | Hooks, logging |
 | Sprites | Packs, the choice, the overlay's contents, the pulse envelope, the relabelled UTILITY row | Overlays (window, draw watcher, wave queries), audio deck stream and master stage, input (beat jump page 2 pads, beat jump lights), hooks |
 | Stems | Files and formats, payloads, per-deck mix, pad and light policy, panel | Input (pads, SLIP LOOP lights, blink clock), deck stream stage, providers, panels, memory, loader, track notifications |
@@ -3210,7 +3211,17 @@ API 20 also adds the audio service's channel stage: `claim_channel` hands a
 deck's post-fader block — after the fader and the channel's own processing,
 just before the master sums it — to one owner, channel 1 before channel 2.
 That is where a per-deck gain belongs; the deck stream stays pre-fader and
-the master is already summed.
+the master is already summed. The deck stream itself becomes a small client
+chain, because it is observation as often as processing — sprites and swang
+both read the position while stems replaces the audio — so every client is
+called after the original, and registration is once per owner for the
+process lifetime like the other chains. `beat_at` walks the playhead's place
+on the deck's own beat grid from the reader the service already resolved the
+deck by, so no module carries a copy of that walk; sprites and swang both
+call it. `install_pc_ldr_hook` joins the service table for a module whose own
+guarded hook sits on a PC-relative load, which the plain installer cannot
+preserve; the hook layer now recognises whichever register the prologue
+loads, not just r3.
 
 Sidechain is the first consumer: HELIX (engine type 14, ui type 4) becomes a
 compressor keyed by the beat fx channel's 150 Hz low-passed level, the
