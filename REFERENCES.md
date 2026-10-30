@@ -2826,6 +2826,7 @@ their hooks and drain admitted native callbacks before releasing trampolines.
 | Now Playing | Worker, sockets, player observations | Hooks, logging |
 | Samples | Bank, settings, voices, pad policy, pad colours, panel | Input (pads, SHIFT, pad lights, mode keys), master audio stage, panels, memory, loader |
 | Sidechain | Compression maths, ratio state, key filters, the meter, the ratio's beat label | Beat fx (operate, BEAT arrows, info block), audio channel stage, overlays (meter window, draw watcher, wave query) |
+| Band-pass | SVF maths, per-channel filter state, the COLOR/PARAM mapping | Its one native hook, through the core's installer |
 | Swang | Swing warp maths, note and phase state, the waveform tick scan | Beat fx (operate, BEAT arrows, TIME knob, info block), audio deck stream and grid walk, pc-ldr installer |
 | Search Latin | Transliteration | Hooks, logging |
 | Sprites | Packs, the choice, the overlay's contents, the pulse envelope, the relabelled UTILITY row | Overlays (window, draw watcher, wave queries), audio deck stream and master stage, input (beat jump page 2 pads, beat jump lights), hooks |

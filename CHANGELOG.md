@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- Port the band-pass filter onto API 20. The DUB ECHO sound color fx becomes a swept, resonant band-pass: the COLOR knob moves and narrows the band, the parameter dial sets the resonance, and the output drops as resonance rises so a narrow band never plays louder than dry. The module owns its one native hook through the core's installer. Its maths returns with its host test. Not yet run on hardware.
+
 - Port the swang module onto API 20. The SPIRAL beat fx becomes a swing locked to the tempo master's beat grid: DEPTH is the strength, the BEAT arrows pick the swung note, TIME shifts the phase, and the warp moves sixteenths as slices rather than stretching samples. The operate claim keeps SPIRAL off stock from ON through OFF, and the waveform gains a shorter dimmer tick where each swung off-beat lands, drawn through the literal-relocating hook installer. The caption artwork keeps its stock images for now. Not yet run on hardware.
 
 - Extend the audio service for two read-only listeners: the deck stream becomes a small client chain (sprites and swang both read the position while stems replaces the audio), `beat_at` walks the playhead's place on the deck's own beat grid so no module carries a copy of that walk, and `install_pc_ldr_hook` joins the service table so a module's own guarded hook can sit on a PC-relative load. The hook layer now preserves whichever register such a prologue loads, not just r3.
