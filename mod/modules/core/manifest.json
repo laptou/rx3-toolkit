@@ -142,7 +142,8 @@
       "core/services/rx3_beatfx.c",
       "sidechain/rx3_sidechain_module.c",
       "swang/rx3_swang_module.c",
-      "bandpass/rx3_bandpass_module.c"
+      "bandpass/rx3_bandpass_module.c",
+      "spritefx/rx3_spritefx_module.c"
     ]
   },
   "advanced": true

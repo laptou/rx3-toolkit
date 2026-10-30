@@ -1,0 +1,35 @@
+{
+  "id": "spritefx",
+  "name": {
+    "en": "Sprite effect (shared)",
+    "fr": "Effet sprite (commun)"
+  },
+  "description": {
+    "en": "Draw a named sprite on the TRANS beat fx, scaled by the DEPTH knob. Other modules choose the pack and the name; this one draws it.",
+    "fr": "Dessine un sprite nommé sur l'effet TRANS, redimensionné par DEPTH. D'autres modules choisissent le pack et le nom ; celui-ci le dessine."
+  },
+  "firmwares": [
+    "1.19"
+  ],
+  "default": false,
+  "order": 64,
+  "category": "screen",
+  "runtime_directory": "spritefx",
+  "namespace": "spritefx",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_spritefx_logic.h",
+    "rx3_spritefx_feature.h",
+    "rx3_spritefx_module.c"
+  ]
+}

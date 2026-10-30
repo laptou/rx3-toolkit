@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- Port the sprite effect and its two packs onto API 20. The TRANS beat fx draws a named sprite from an `RX3_SPRITES` pack, scaled by DEPTH and placed by channel; the operate claim keeps TRANS dry from ON through OFF. Charizard and Hector are shell-only modules that name their pack and ask for a restart. The beat-fx name keeps its stock TRANS caption for now: relabelling it needs the stock records' measured sizes, which only a player or an imagedata dump can give. Not yet run on hardware.
+
 - Port the band-pass filter onto API 20. The DUB ECHO sound color fx becomes a swept, resonant band-pass: the COLOR knob moves and narrows the band, the parameter dial sets the resonance, and the output drops as resonance rises so a narrow band never plays louder than dry. The module owns its one native hook through the core's installer. Its maths returns with its host test. Not yet run on hardware.
 
 - Port the swang module onto API 20. The SPIRAL beat fx becomes a swing locked to the tempo master's beat grid: DEPTH is the strength, the BEAT arrows pick the swung note, TIME shifts the phase, and the warp moves sixteenths as slices rather than stretching samples. The operate claim keeps SPIRAL off stock from ON through OFF, and the waveform gains a shorter dimmer tick where each swung off-beat lands, drawn through the literal-relocating hook installer. The caption artwork keeps its stock images for now. Not yet run on hardware.
