@@ -35,8 +35,11 @@ ALLOWED = {
     "close", "getenv", "gettimeofday", "lseek",
     "memcmp", "memcpy", "memset",
     "mmap", "mprotect", "munmap", "open",
-    "pthread_create", "pthread_detach",
+    "pthread_create", "pthread_detach", "pthread_join",
     "read", "strlen", "sysconf", "usleep", "write",
+    # Now playing. rbp imports each of these from its libc for its own
+    # networking, checked in its dynamic symbol table for 1.19.
+    "poll", "recv", "send", "sendto", "setsockopt", "socket", "socketpair",
     # the crash report. all three are GLIBC_2.4 exports of the player's
     # /lib/libc-2.13.so.
     "pipe", "sigaction", "sigaltstack",

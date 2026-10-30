@@ -374,6 +374,9 @@ static void sidechain_feature_after_image(void *render, void *image,
 static int bandpass_feature_configured(void);
 static int bandpass_feature_install(void);
 static void bandpass_feature_remove(void);
+static int now_playing_feature_configured(void);
+static int now_playing_feature_install(void);
+static void now_playing_feature_remove(void);
 static void sprites_feature_channel_block(unsigned int deck, void *channel,
                                           Float2 *output, int frames);
 static void sidechain_feature_channel_block(unsigned int deck, void *channel,
@@ -407,7 +410,7 @@ static void rx3_notify_image(void *render, void *image, uint16_t window_layer,
                             uint32_t image_id);
 static uint32_t rx3_swap_image(uint32_t image_id);
 
-#define RUNTIME_FEATURE_COUNT 7u
+#define RUNTIME_FEATURE_COUNT 8u
 
 static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
     {
@@ -485,6 +488,12 @@ static struct rx3_runtime_feature runtime_features[RUNTIME_FEATURE_COUNT] = {
         .configured = bandpass_feature_configured,
         .install = bandpass_feature_install,
         .remove = bandpass_feature_remove,
+    },
+    {
+        .name = "now-playing",
+        .configured = now_playing_feature_configured,
+        .install = now_playing_feature_install,
+        .remove = now_playing_feature_remove,
     }
 };
 
@@ -2245,6 +2254,8 @@ static void remove_channel_tap(void)
 #include "../../swang/1.19/rx3_swang_feature.h"
 #include "../../spritefx/1.19/rx3_spritefx_feature.h"
 #include "../../bandpass/1.19/rx3_bandpass_feature.h"
+#include "../../now-playing/1.19/rx3_now_playing_decl.h"
+#include "../../now-playing/1.19/rx3_now_playing_feature.h"
 
 static int hooked_load(void *reader, const void *track_info)
 {

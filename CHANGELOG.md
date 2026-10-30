@@ -5,6 +5,8 @@
 
 ### Added
 
+- The **Now playing** module broadcasts each deck's state to the computer on the rear USB-B port: title, artist, comment, track id, BPM, tempo and on-air, one JSON datagram to UDP 50123. The title comes from the DB record the player loads; the artist and the comment are read from the file's tags on the worker, because the standalone player's play screen keeps neither. MP3 uses ID3v2 with an ID3v1 fallback, WAV and AIFF use their native fields or an embedded ID3 chunk, and MP4/AAC uses the `ilst` atoms. Off by default; hardware validation is still pending.
+
 - `make new-module ID=<id>` writes the manifest, the shell contract, the guards and the README a module is made of, namespaced and ordered. `CORE=1` writes the performance-core variant as well, with the feature header and the `module.sh` that declines when the core is not selected. These four names and the order field were discoverable only by reading a neighbouring module, and a guard copied that way landed where `make test` does not look for it.
 
 - A pull request template carrying the sections a reviewer reads, Summary, Changes, Testing and Legal, and the two prose rules a contribution is most often sent back for.
