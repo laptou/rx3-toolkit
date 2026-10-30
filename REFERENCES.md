@@ -2825,6 +2825,7 @@ their hooks and drain admitted native callbacks before releasing trampolines.
 | Logo | Artwork, its size and its native placement | Native image replacement |
 | Now Playing | Worker, sockets, player observations | Hooks, logging |
 | Samples | Bank, settings, voices, pad policy, pad colours, panel | Input (pads, SHIFT, pad lights, mode keys), master audio stage, panels, memory, loader |
+| Sidechain | Compression maths, ratio state, key filters, the meter, the ratio's beat label | Beat fx (operate, BEAT arrows, info block), audio channel stage, overlays (meter window, draw watcher, wave query) |
 | Search Latin | Transliteration | Hooks, logging |
 | Sprites | Packs, the choice, the overlay's contents, the pulse envelope, the relabelled UTILITY row | Overlays (window, draw watcher, wave queries), audio deck stream and master stage, input (beat jump page 2 pads, beat jump lights), hooks |
 | Stems | Files and formats, payloads, per-deck mix, pad and light policy, panel | Input (pads, SLIP LOOP lights, blink clock), deck stream stage, providers, panels, memory, loader, track notifications |
@@ -3181,6 +3182,48 @@ This is host-built only. Window creation, compositing order, the colour key
 and the redraw cadence still need the hardware acceptance sequence, and a
 claim is refused rather than retried when the player will not create the
 window.
+
+<a id="doc-runtime-framework--beat-fx-ownership-and-channel-stage-api-version-20"></a>
+##### Beat fx ownership and the channel stage (API version 20)
+
+A module that replaces a stock beat fx needs four native places, and a
+function can carry only one hook, so `services->beatfx` owns them:
+`operateBeatEffect` (the selected effect's block, in place, on the audio
+thread — return nonzero to skip stock), the BEAT arrows and the TIME knob
+(`MasterInnards` events on the ui thread — return nonzero to consume), and
+`SetBeatFxInfo` (the play screen's beat fx block, broadcast after stock
+filled it). Each hook installs with its first client and is removed with
+its last; registration is once per owner per stage for the process
+lifetime, and priority orders each chain like the pad chain.
+
+The ownership rule lives in the api header as inline helpers, because every
+consumer filters by it on every block: a module owns the block from ON
+through OFF — the faded-to type is its own, the next is its own or off, the
+channel is settled, and the fade is not a tail. The tail is handed back to
+stock so a switch to or from the module's effect still crossfades in
+stock. `manager()` returns the manager the last operate call ran on, for
+ui-thread queries. While any info client is registered, the core also logs
+every change of the manager's selection and fade state, so a module that
+misreads it shows up in the core log.
+
+API 20 also adds the audio service's channel stage: `claim_channel` hands a
+deck's post-fader block — after the fader and the channel's own processing,
+just before the master sums it — to one owner, channel 1 before channel 2.
+That is where a per-deck gain belongs; the deck stream stays pre-fader and
+the master is already summed.
+
+Sidechain is the first consumer: HELIX (engine type 14, ui type 4) becomes a
+compressor keyed by the beat fx channel's 150 Hz low-passed level, the
+channel stage ducks the other deck, the operate claim keeps HELIX dry from
+ON through OFF, the BEAT arrows step the ratio, the info claim writes the
+ratio's stock label into the beat number, and the meter scrolls through an
+overlay window below the sprite. Its caption images and beat-number
+lettering keep their stock artwork in this port — relabelling them needs
+the stock records' measured sizes.
+
+This is host-built only. The operate skip, the control takeover, the block
+rewrite and the channel stage's deck mapping still need the hardware
+acceptance sequence.
 
 ---
 

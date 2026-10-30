@@ -1,0 +1,36 @@
+{
+  "id": "sidechain",
+  "name": {
+    "en": "Sidechain compressor",
+    "fr": "Compresseur sidechain"
+  },
+  "description": {
+    "en": "Turn the HELIX beat fx into a sidechain compressor: the beat fx channel triggers, the other deck ducks. DEPTH is the threshold, the BEAT arrows the ratio, TIME the release. A meter scrolls between the waveforms.",
+    "fr": "Transforme l'effet HELIX en compresseur sidechain : la voie du beat fx déclenche, l'autre deck s'atténue. DEPTH est le seuil, les flèches BEAT le ratio, TIME le release. Une vignette défile entre les formes d'onde."
+  },
+  "firmwares": [
+    "1.19"
+  ],
+  "default": false,
+  "order": 61,
+  "category": "beatjump",
+  "runtime_directory": "sidechain",
+  "namespace": "sidechain",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_sidechain_dsp.h",
+    "rx3_sidechain_meter.h",
+    "rx3_sidechain_feature.h",
+    "rx3_sidechain_module.c"
+  ]
+}
