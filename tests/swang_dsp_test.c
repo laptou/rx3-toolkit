@@ -121,6 +121,50 @@ int main(void)
     if (!near(sw_swing_for(0.0f), 0.5f, 0.0f, "depth 0") ||
         !near(sw_swing_for(1.0f), 0.75f, 0.0f, "depth 1"))
         return 3;
+    {
+        int xs[8];
+        int got;
+        got = sw_offbeat_xs(0.0f, 1.0f, 0, 100, 1.0f, 0.0f, 0.5f, xs, 8);
+        if (got != 1 || xs[0] != 50) {
+            printf("straight eighth: %d at %d\n", got, got ? xs[0] : -1);
+            return 8;
+        }
+        got = sw_offbeat_xs(0.0f, 1.0f, 0, 100, 1.0f, 0.0f, 0.75f, xs, 8);
+        if (got != 1 || xs[0] != 75) {
+            printf("hard eighth: %d at %d\n", got, got ? xs[0] : -1);
+            return 8;
+        }
+        got = sw_offbeat_xs(0.0f, 1.0f, 0, 300, 1.0f, 0.0f, 2.0f / 3.0f, xs, 8);
+        if (got != 1 || xs[0] != 200) {
+            printf("triplet eighth: %d at %d\n", got, got ? xs[0] : -1);
+            return 8;
+        }
+        got = sw_offbeat_xs(0.0f, 1.0f, 0, 100, 1.0f, 0.25f, 0.5f, xs, 8);
+        if (got != 1 || xs[0] != 75) {
+            printf("phased eighth: %d at %d\n", got, got ? xs[0] : -1);
+            return 8;
+        }
+        got = sw_offbeat_xs(0.0f, 1.0f, 0, 100, 2.0f, 0.0f, 0.5f, xs, 8);
+        if (got != 0) {
+            printf("straight quarters leaked a tick\n");
+            return 8;
+        }
+        got = sw_offbeat_xs(0.0f, 2.0f, 0, 200, 2.0f, 0.0f, 0.75f, xs, 8);
+        if (got != 1 || xs[0] != 150) {
+            printf("hard quarters: %d at %d\n", got, got ? xs[0] : -1);
+            return 8;
+        }
+        got = sw_offbeat_xs(0.0f, 1.0f, 0, 100, 0.5f, 0.0f, 0.5f, xs, 8);
+        if (got != 2 || xs[0] != 25 || xs[1] != 75) {
+            printf("straight sixteenths: %d\n", got);
+            return 8;
+        }
+        got = sw_offbeat_xs(0.0f, 1.0f, 0, 100, 1.0f, 0.9f, 0.75f, xs, 8);
+        if (got != 1 || xs[0] != 65) {
+            printf("wrapped phase: %d at %d\n", got, got ? xs[0] : -1);
+            return 8;
+        }
+    }
     /* straight swing is the input, bit for bit. */
     for (index = 0; index < TOTAL; index++) {
         buf[index].left = sinf((float)index * 0.05f);

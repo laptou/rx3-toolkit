@@ -36,5 +36,13 @@ Select SWANG, pick a channel (CH1, CH2 or MASTER) and press ON:
 
 When you press ON or OFF, the swing glides in or out instead of jumping.
 
-Not demonstrated on hardware yet: the SWANG labels on the screen, and how
-tight the swing sits against the grid while the master deck is pitch-bent.
+While SWANG is on, each deck's waveform draws an extra tick in every gap
+between the beat marks. It is shorter and dimmer than those marks, and it
+sits where the swung off-beat lands: DEPTH slides it later, TIME shifts it
+with the grid, and the BEAT arrows decide how the gaps are divided. Sixteenth
+notes put two ticks in a beat, eighths one, and quarter notes one every two
+beats. As the effect glides off, the ticks slide back and then go away.
+
+Not demonstrated on hardware yet: the SWANG labels on the screen, the swing
+ticks on the waveform, and how tight the swing sits against the grid while
+the master deck is pitch-bent.

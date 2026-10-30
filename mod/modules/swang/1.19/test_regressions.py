@@ -29,14 +29,28 @@ require(
     "the module declines without the core and the feature gates on its flag",
 )
 require(
-    "install_hook(" not in FEATURE
+    "install_hook(" not in FEATURE.replace("uninstall_hook(", "")
     and ".beat_fx_operate = swang_feature_beat_fx_operate," in HOOK
     and ".beat_fx_beat = swang_feature_beat_fx_beat," in HOOK
     and ".beat_fx_time = swang_feature_beat_fx_time," in HOOK
     and ".playhead = swang_feature_playhead," in HOOK
-    and "original_beat_fx_time_event && rx3_deck_tap_ready()" in FEATURE,
-    "the core's broker and deck tap own every hook; the feature does not "
-    "start without them",
+    and "!rx3_deck_tap_ready()" in FEATURE,
+    "the core's broker and deck tap own the audio hooks; the feature does "
+    "not start without them",
+)
+require(
+    "SW_HALFBEAT ((unsigned long)0x0024b72c)" in FEATURE
+    and "0xc0, 0xc3, 0x9f, 0xe5, 0xf0, 0x0f, 0x2d, 0xe9" in FEATURE
+    and "install_pc_ldr_hook(" in FEATURE
+    and ", 12u)" in FEATURE
+    and "0x02498cc8u" in FEATURE
+    and "SW_TICK_TOP 16u" in FEATURE
+    and "SW_TICK_BOTTOM 23u" in FEATURE
+    and "SW_TICK_COLOUR 0x632cu" in FEATURE
+    and "sw_offbeat_xs(" in FEATURE
+    and "sw_swing_ui" in FEATURE,
+    "the waveform hook is SetUpHalfBeatData, whose prologue loads r12, and "
+    "the extra ticks are painted into ExMyWaveTempData between the beat marks",
 )
 require(
     "#define BEAT_FX_SPIRAL 7" in FEATURE

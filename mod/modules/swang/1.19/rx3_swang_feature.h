@@ -15,6 +15,9 @@
  *   ON swings; OFF glides the warp back to straight. rbp's ON and OFF are
  *     the requested type (+0x50) turning spiral or 0, and SWANG owns the
  *     block across both (the broker's rx3_beat_fx_owned).
+ * while it is on, each deck's waveform gains a shorter dimmer tick in every
+ * gap between the beat ticks rbp already draws. the tick sits where the
+ * swung off-beat lands, so DEPTH slides it and TIME shifts it.
  * the grid is the tempo MASTER deck's (PlayEngine +0x5c SyncMaster: +0x8
  * the deck, or +0x20 while +0x1c overrides; -1 is none). with no master it
  * is the beat fx channel's deck, and with neither the audio stays straight.
@@ -62,8 +65,39 @@ static volatile long sw_positions[2] = { -1, -1 };
 static struct sw_state sw_state;
 static struct sw_clock sw_clock = { -1, 0.0, 0, 0.0f };
 static float sw_swing = SW_STRAIGHT;
+/* the ui thread's copy of the glide, and whether the waveform ticks show. */
+static volatile float sw_swing_ui = SW_STRAIGHT;
+static volatile int sw_ticks_on;
 static int sw_settled;
 static int sw_logged;
+
+/* ui_PlayMode_Wave_SetUpHalfBeatData. rbp draws one tick per beat into the
+   waveform buffer: downbeats from row 5, other beats from row 10, both
+   ending at row 22. the prologue is ldr r12,[pc] ; push {r4-r11}. */
+#define SW_HALFBEAT ((unsigned long)0x0024b72c)
+#define SW_WAVE_PTR (*(uint8_t *volatile *)0x02498cc8u)
+#define SW_WAVE_STRIDE 0x6f8u
+#define SW_WAVE_DECK 0x60b10u
+#define SW_WAVE_WIDTH 892u
+#define SW_TICK_TOP 16u
+#define SW_TICK_BOTTOM 23u
+#define SW_TICK_COLOUR 0x632cu
+#define SW_BEAT_RED 0xf800u
+#define SW_BEAT_MARK 0xce59u
+#define SW_BEAT_DIM 0x2c3au
+static const uint8_t sw_halfbeat_guard[8] = {
+    0xc0, 0xc3, 0x9f, 0xe5, 0xf0, 0x0f, 0x2d, 0xe9
+};
+typedef void (*sw_halfbeat_fn)(int deck, unsigned pixel, unsigned from,
+                               unsigned to, uint16_t *mark);
+static struct installed_hook sw_halfbeat_hook;
+static sw_halfbeat_fn original_sw_halfbeat;
+/* the beat-tick scan in progress, ui thread only. */
+static int sw_scan_deck = -2;
+static unsigned sw_scan_x;
+static int sw_scan_have;
+static float sw_scan_beat;
+static unsigned sw_scan_px;
 
 static int sw_master_deck(void)
 {
@@ -144,9 +178,11 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
     double beat;
     float step;
     int deck;
+    int clocked = 0;
     unsigned channel;
     if (!rx3_beat_fx_owned(fields, BEAT_FX_SPIRAL)) {
         sw_settled = 0;
+        sw_ticks_on = 0;
         return 0;
     }
     if (!sw_settled) {
@@ -169,6 +205,7 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
         pair_at = sw_fraction(pairs);
         pair_step = step / pair_beats;
         pair_frames = pair_beats / step;
+        clocked = 1;
         if (rx3_beat_fx_on(fields, BEAT_FX_SPIRAL))
             swing = sw_swing_for(*(const float *)(fields + 0xe8u));
     }
@@ -178,7 +215,110 @@ static int swang_feature_beat_fx_operate(void *manager, Float2 *buffer,
     sw_process(&sw_state, (struct sw_stereo *)buffer, frames, pair_at,
                pair_step, sw_swing, pair_frames,
                (int)(pair_beats * 2.0f + 0.5f));
+    sw_swing_ui = sw_swing;
+    sw_ticks_on = clocked && (rx3_beat_fx_on(fields, BEAT_FX_SPIRAL) ||
+                              sw_swing > SW_STRAIGHT + 0.002f);
     return 1;
+}
+
+/* a column rbp just painted as a beat tick: the same colour on the rows
+   every beat mark covers. */
+static int swang_beat_painted(int deck, unsigned x)
+{
+    uint8_t *base = SW_WAVE_PTR;
+    uint16_t sample[3];
+    unsigned index;
+    static const unsigned rows[3] = { 16u, 19u, 22u };
+    if (!base || x >= SW_WAVE_WIDTH)
+        return 0;
+    for (index = 0; index < 3u; index++)
+        sample[index] = *(const uint16_t *)(base + (unsigned)deck * SW_WAVE_DECK +
+                                            rows[index] * SW_WAVE_STRIDE +
+                                            x * 2u);
+    if (sample[0] != sample[1] || sample[1] != sample[2])
+        return 0;
+    return sample[0] == SW_BEAT_RED || sample[0] == SW_BEAT_MARK ||
+           sample[0] == SW_BEAT_DIM;
+}
+
+/* shorter and dimmer than the beat ticks, in the same gutter. */
+static void swang_paint_tick(int deck, int x)
+{
+    uint8_t *base = SW_WAVE_PTR;
+    unsigned row;
+    if (!base || x < 0 || x >= (int)SW_WAVE_WIDTH)
+        return;
+    for (row = SW_TICK_TOP; row < SW_TICK_BOTTOM; row++)
+        *(uint16_t *)(base + (unsigned)deck * SW_WAVE_DECK +
+                      row * SW_WAVE_STRIDE + (unsigned)x * 2u) = SW_TICK_COLOUR;
+}
+
+/* called after rbp's own tick for this column. a gap is drawn once its
+   right-hand beat has been painted, still inside this frame. noinline so
+   the softfp float work cannot run before the hard-float original. */
+static void __attribute__((noinline))
+swang_note_beat_tick(int deck, unsigned pixel, uint16_t *mark)
+{
+    unsigned beat;
+    unsigned note;
+    int this_mod;
+    int prev_mod;
+    int delta;
+    int xs[8];
+    int count;
+    int index;
+    float right_beat;
+    if (!sw_ticks_on || !mark || deck < 0 || deck > 1) {
+        sw_scan_have = 0;
+        sw_scan_deck = -2;
+        return;
+    }
+    if (sw_scan_deck != deck || pixel < sw_scan_x) {
+        sw_scan_have = 0;
+        sw_scan_deck = deck;
+    } else if (pixel == sw_scan_x) {
+        return;
+    }
+    sw_scan_x = pixel;
+    beat = *mark;
+    if (beat < 1u || beat > 5u || !swang_beat_painted(deck, pixel))
+        return;
+    this_mod = (int)(beat == 5u ? 1u : beat) - 1;
+    if (!sw_scan_have) {
+        sw_scan_have = 1;
+        sw_scan_beat = (float)this_mod;
+        sw_scan_px = pixel;
+        return;
+    }
+    /* a downbeat is painted on two columns. that is one beat, not a bar. */
+    if (this_mod == ((int)sw_scan_beat & 3) && pixel - sw_scan_px <= 2u)
+        return;
+    prev_mod = (int)sw_scan_beat & 3;
+    delta = this_mod - prev_mod;
+    if (delta <= 0)
+        delta += 4;
+    right_beat = sw_scan_beat + (float)delta;
+    note = sw_note < SW_NOTE_COUNT ? sw_note : 0u;
+    count = sw_offbeat_xs(sw_scan_beat, right_beat, (int)sw_scan_px,
+                          (int)pixel, 2.0f * sw_note_beats[note],
+                          (float)sw_phase / (float)SW_PHASE_STEPS, sw_swing_ui,
+                          xs, 8);
+    for (index = 0; index < count; index++)
+        swang_paint_tick(deck, xs[index]);
+    sw_scan_beat = right_beat;
+    sw_scan_px = pixel;
+}
+
+/* s0 and s1 are rbp's zoom, passed in the hard-float registers. this
+   translation unit is softfp, so the wrapper takes only the integer args
+   and calls the original before any of our own float work. */
+static void swang_halfbeat(int deck, unsigned pixel, unsigned from,
+                           unsigned to, uint16_t *mark)
+{
+    original_sw_halfbeat(deck, pixel, from, to, mark);
+    (void)from;
+    (void)to;
+    swang_note_beat_tick(deck, pixel, mark);
 }
 
 static void swang_feature_playhead(unsigned int deck, long position)
@@ -250,15 +390,26 @@ static int swang_feature_configured(void)
 }
 
 /* without the broker's hooks spiral would play stock and the arrows would
-   move its beat, and without the deck tap there is no grid. */
+   move its beat, and without the deck tap there is no grid. the waveform
+   ticks are optional: a rejected guard leaves the beat marks stock. */
 static int swang_feature_install(void)
 {
-    return original_operate_beat_effect && original_beat_fx_beat_event &&
-           original_beat_fx_time_event && rx3_deck_tap_ready();
+    if (!original_operate_beat_effect || !original_beat_fx_beat_event ||
+        !original_beat_fx_time_event || !rx3_deck_tap_ready())
+        return 0;
+    original_sw_halfbeat = (sw_halfbeat_fn)install_pc_ldr_hook(
+        &sw_halfbeat_hook, SW_HALFBEAT, sw_halfbeat_guard,
+        (void *)swang_halfbeat, 12u);
+    if (!original_sw_halfbeat)
+        log_line("swang: waveform ticks stay stock");
+    return 1;
 }
 
 static void swang_feature_remove(void)
 {
+    uninstall_hook(&sw_halfbeat_hook);
+    original_sw_halfbeat = 0;
+    sw_ticks_on = 0;
 }
 
 #endif /* RX3_SWANG_FEATURE_H */

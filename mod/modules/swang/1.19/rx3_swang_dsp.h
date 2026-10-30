@@ -101,6 +101,51 @@ static inline float sw_swing_for(float depth)
     return SW_STRAIGHT + (SW_HARDEST - SW_STRAIGHT) * depth;
 }
 
+/* floor, without libm. */
+static int sw_floor_to_int(float value)
+{
+    int whole = (int)value;
+    if ((float)whole > value)
+        whole--;
+    return whole;
+}
+
+/* pixel columns of swung off-beats strictly between two beat ticks.
+   left_beat and right_beat are positions on the grid, left_x and right_x
+   where those beats are drawn. phase is TIME as a fraction of a pair, and
+   swing is the off-beat's place in the pair. */
+static int sw_offbeat_xs(float left_beat, float right_beat, int left_x,
+                         int right_x, float pair_beats, float phase,
+                         float swing, int *xs, int count)
+{
+    float span;
+    float threshold;
+    int written = 0;
+    int k;
+    if (pair_beats < 0.25f || right_beat <= left_beat || right_x <= left_x ||
+        count <= 0)
+        return 0;
+    span = right_beat - left_beat;
+    threshold = left_beat / pair_beats - phase - swing;
+    k = sw_floor_to_int(threshold) + 1;
+    while (written < count) {
+        float beat = ((float)k + phase + swing) * pair_beats;
+        float along;
+        int x;
+        if (beat >= right_beat)
+            break;
+        if (beat > left_beat) {
+            along = (beat - left_beat) / span;
+            x = left_x + (int)((float)(right_x - left_x) * along + 0.5f);
+            if (x > left_x && x < right_x &&
+                (written == 0 || xs[written - 1] != x))
+                xs[written++] = x;
+        }
+        k++;
+    }
+    return written;
+}
+
 struct sw_plan {
     int region;      /* 2k: slice k's pin, 2k+1: slice k's stretch */
     uint32_t target; /* the delay wanted, in frames */
