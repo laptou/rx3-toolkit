@@ -17,9 +17,10 @@
  * byte (0 press, 2 or 3 release). `channel` is the native channel byte
  * unchanged. `deck` is resolved from the channel, else from the player that
  * dispatched it, else RX3_NO_DECK. `pad_mode` is the player's pad mode
- * (2 is SLIP LOOP). */
+ * (2 is SLIP LOOP). `page` is the mode's page byte: nonzero while its second
+ * page is shown, which is where BEAT JUMP offers its own row. */
 struct rx3_pad_event {
-    unsigned int code, operation, channel, deck, pad_mode;
+    unsigned int code, operation, channel, deck, pad_mode, page;
 };
 
 /* Return nonzero to consume the event. Lower priority values run first;
@@ -43,15 +44,18 @@ typedef int (*rx3_key_handler)(const struct rx3_key_event *);
 #define RX3_LIGHT_ON     1u  /* the colour at full brightness */
 #define RX3_LIGHT_DIM    2u  /* the colour at its idle brightness */
 #define RX3_LIGHT_BLINK  3u  /* the colour, on the shared blink clock */
+#define RX3_LIGHT_OFF    4u  /* the LED dark, whatever it was showing */
 #define RX3_LIGHT_SHIFT  8u
 struct rx3_light { unsigned int state; uint32_t rgb; /* 0xRRGGBB */ };
 typedef void (*rx3_light_fn)(unsigned int deck, unsigned int control, struct rx3_light *);
-/* The two native refreshes a module can own, one owner each. SLIP LOOP is
+/* The three native refreshes a module can own, one owner each. SLIP LOOP is
  * refreshed per deck while that pad mode is shown; the unit-wide refresh
  * covers every pad mode and SHIFT, with deck RX3_NO_DECK when the player
- * does not name one. */
+ * does not name one. BEAT JUMP's own refresh is dispatched only while its
+ * second page is shown, with the deck the refreshing player names. */
 #define RX3_LIGHTS_SLIP_LOOP 0u
 #define RX3_LIGHTS_PADS      1u
+#define RX3_LIGHTS_BEAT_JUMP 2u
 
 struct rx3_input_service {
     int (*register_pad)(const void *owner, unsigned int priority, rx3_pad_handler);

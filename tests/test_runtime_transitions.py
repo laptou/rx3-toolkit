@@ -236,7 +236,7 @@ static const struct rx3_services *framework=&services;
 /* The core's pad chain: the bank first, then the player exactly once. */
 static int hooked_on_key_pad(void *self, const void *raw) {
     const uint8_t *event=raw;assert(self==(void *)1);
-    struct rx3_pad_event e={event[8]|(unsigned)event[9]<<8,event[11]&15u,event[10],0,2};
+    struct rx3_pad_event e={event[8]|(unsigned)event[9]<<8,event[11]&15u,event[10],0,2,0};
     if(samples_pad(&e)) return 1;
     stock_calls++; return 42;
 }

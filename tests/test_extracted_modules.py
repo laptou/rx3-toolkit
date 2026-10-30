@@ -121,7 +121,7 @@ int main(void) {
     assert(modes == 1 && masters == 1 && pads == 1 && keys == 1 && leds == 1 && rows == 1);
     assert(row && row->panel_id == 3 && row->activate);
     /* The pads belong to the player until the panel is shown. */
-    struct rx3_pad_event press = {0x4117, 0, 1, 0, 0};
+    struct rx3_pad_event press = {0x4117, 0, 1, 0, 0, 0};
     assert(!pad(&press));
     struct rx3_light light = {RX3_LIGHT_NATIVE, 0};
     lights[RX3_LIGHTS_PADS](0, 0, &light); assert(light.state == RX3_LIGHT_NATIVE);
@@ -166,7 +166,7 @@ int main(void) {
     rx3_stems_module.track_did_load(0, (void *)1, "/usb/Contents/track.wav");
     struct rx3_mix_state state = mix(0);
     assert(!state.available && !state.ready);
-    struct rx3_pad_event press = {0x411b, 0, 1, 0, 2};
+    struct rx3_pad_event press = {0x411b, 0, 1, 0, 2, 0};
     assert(!pad(&press));
     struct rx3_stereo out[2] = {{1, -1}, {1, -1}};
     stream(0, (void *)1, 0, out, 2);

@@ -68,6 +68,11 @@ struct rx3_overlay_service {
     void (*release)(const void *owner);
     /* The strip one deck's waveform occupies, in screen coordinates. */
     int (*deck_rect)(unsigned int deck, struct rx3_overlay_rect *rect);
+    /* Nonzero while the waveform screen's own window exists, and while that
+       deck's waveform holds data: an overlay is pointless before the player
+       has a screen to draw under it. */
+    int (*wave_up)(void);
+    int (*wave_deck_loaded)(unsigned int deck);
     /* Called on the render thread after the player drew `image`, which is
        where a module paints: the scrolling waveform is 0x159a. One watcher
        per owner; the second registration fails without replacing the first. */

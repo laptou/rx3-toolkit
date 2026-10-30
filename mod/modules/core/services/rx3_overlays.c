@@ -33,6 +33,14 @@
 static const uint32_t overlay_z_slots[] = { 0x3eu, 0x3du, 0x3cu, 0x3bu };
 #define OVERLAY_SLOT_COUNT (sizeof(overlay_z_slots) / sizeof(overlay_z_slots[0]))
 
+/* rbp's scrolling waveform window: both decks in one window, deck 0 in the
+   top strip. The handle is zero whenever the waveform screen is not built.
+   The per-deck words are non-zero while that deck has waveform data. */
+#define WAVE_WINDOW_ID ((unsigned long)0x02498d44)
+#define WAVE_DECK0_DATA ((unsigned long)0x05902198)
+#define WAVE_DECK1_DATA ((unsigned long)0x05930fb4)
+static const unsigned long overlay_wave_data[2] = {WAVE_DECK0_DATA, WAVE_DECK1_DATA};
+
 typedef int (*ds_gr_create_window_fn)(void **window, uint32_t *info);
 typedef int (*ds_gr_window_fn)(void *window);
 typedef int (*ds_gr_lock_window_fn)(void *window, void **pixels, int *pitch);
@@ -95,10 +103,19 @@ static int overlay_claim(const void *owner, const struct rx3_overlay_rect *rect,
     return 0;
 }
 
+/* The handle the caller holds must still be the window the table holds:
+   after release() the caller's struct is stale, and touching a destroyed
+   window would reach the player with a dead pointer. */
+static int overlay_live(const struct rx3_overlay *overlay)
+{
+    return overlay && overlay->handle && overlay->slot < OVERLAY_SLOT_COUNT &&
+           overlay_windows[overlay->slot].handle == overlay->handle;
+}
+
 static int overlay_lock(struct rx3_overlay *overlay, uint16_t **pixels,
                         unsigned int *pitch)
 {
-    if (!overlay || !overlay->handle || !pixels || !pitch)
+    if (!overlay_live(overlay) || !pixels || !pitch)
         return 0;
     int bytes_per_row = 0;
     uint8_t *raw = 0;
@@ -116,7 +133,7 @@ static int overlay_lock(struct rx3_overlay *overlay, uint16_t **pixels,
 
 static void overlay_present(struct rx3_overlay *overlay)
 {
-    if (!overlay || !overlay->handle)
+    if (!overlay_live(overlay))
         return;
     /* Setting the visible option again is what marks the window dirty for
        rbp's compositor. */
@@ -128,7 +145,7 @@ static void overlay_present(struct rx3_overlay *overlay)
 
 static void overlay_discard(struct rx3_overlay *overlay)
 {
-    if (!overlay || !overlay->handle)
+    if (!overlay_live(overlay))
         return;
     ((ds_gr_window_fn)DS_GR_UNLOCK_WINDOW)(overlay->handle);
 }
@@ -162,6 +179,17 @@ static int overlay_deck_rect(unsigned int deck, struct rx3_overlay_rect *rect)
     rect->width = RX3_OVERLAY_WAVE_WIDTH;
     rect->height = RX3_OVERLAY_WAVE_STRIDE;
     return 1;
+}
+
+static int overlay_wave_up(void)
+{
+    return *(void *const volatile *)WAVE_WINDOW_ID != 0;
+}
+
+static int overlay_wave_deck_loaded(unsigned int deck)
+{
+    return deck < 2u &&
+           *(volatile int *)(const void *)overlay_wave_data[deck] != 0;
 }
 
 static int overlay_watch_draw(const void *owner, void (*watcher)(unsigned int))
@@ -210,5 +238,6 @@ unsigned int rx3_overlay_count(void)
 
 const struct rx3_overlay_service rx3_overlays = {
     overlay_claim, overlay_lock, overlay_present, overlay_discard,
-    overlay_release, overlay_deck_rect, overlay_watch_draw, overlay_unwatch_draw
+    overlay_release, overlay_deck_rect, overlay_wave_up,
+    overlay_wave_deck_loaded, overlay_watch_draw, overlay_unwatch_draw
 };
