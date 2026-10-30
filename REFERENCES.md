@@ -2826,6 +2826,7 @@ their hooks and drain admitted native callbacks before releasing trampolines.
 | Now Playing | Worker, sockets, player observations | Hooks, logging |
 | Samples | Bank, settings, voices, pad policy, pad colours, panel | Input (pads, SHIFT, pad lights, mode keys), master audio stage, panels, memory, loader |
 | Search Latin | Transliteration | Hooks, logging |
+| Sprites | Packs, the choice, the overlay's contents, the pulse envelope, the relabelled UTILITY row | Overlays (window, draw watcher, wave queries), audio deck stream and master stage, input (beat jump page 2 pads, beat jump lights), hooks |
 | Stems | Files and formats, payloads, per-deck mix, pad and light policy, panel | Input (pads, SLIP LOOP lights, blink clock), deck stream stage, providers, panels, memory, loader, track notifications |
 | Stemwave | Waveform rendering | Hooks, mix observations, waveform copies, track notifications |
 | Theme | Chrome and conversion policy, SHIFT + SHORTCUT, Utility row, waveform palette, pixel arena, watcher | Image variants and fill adapter, key handler, guarded writes, memory |
@@ -3153,6 +3154,28 @@ it with each drawn image id after the image service sees it; the scrolling
 waveform is `0x159a`. The core dispatches that from the existing draw hook, so
 an overlay costs no extra native hook. Claims from opposite ends keep one
 module's stacking independent of the order modules start in.
+
+`wave_up` says whether the waveform screen's window exists and
+`wave_deck_loaded` whether a deck's waveform holds data, both read from the
+player's own words, so an overlay closes with the screen instead of floating
+over the browse page. A caller's window handle is checked against the core's
+table on every use, so a struct left stale by `release` cannot reach the
+player.
+
+API 19 also amends the input service: the pad event carries the mode's `page`
+byte, which is how BEAT JUMP page 2 is told apart from page 1;
+`RX3_LIGHTS_BEAT_JUMP` is a third claimable light refresh, dispatched only
+while that page is shown, with the deck the refreshing player names; and
+`RX3_LIGHT_OFF` answers an LED dark. Sprites is the first consumer of all
+three.
+
+The sprites module is the first client of the overlay service: one pack per
+deck loaded from `RX3_SPRITES`, one window over the whole view, beat phase
+walked from the deck's own reader through the audio deck stream, and the
+pulse envelope from the master bus. Its pad faces keep the stock glyphs in
+this port — relabelling them needs the stock glyph records' measured sizes,
+which only a player or an imagedata dump can give — so the lit pad is the
+selection marker on BEAT JUMP page 2 until then.
 
 This is host-built only. Window creation, compositing order, the colour key
 and the redraw cadence still need the hardware acceptance sequence, and a

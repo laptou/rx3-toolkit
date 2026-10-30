@@ -1,0 +1,38 @@
+{
+  "id": "sprites",
+  "name": {
+    "en": "Animated sprites",
+    "fr": "Sprites animés"
+  },
+  "description": {
+    "en": "Draw one hard-edged animation from RX3_SPRITES over the waveform. BEAT JUMP page 2 picks one of the first eight packs or turns the overlay off. Off unless the USB directory is present.",
+    "fr": "Dessine une animation à bords francs depuis RX3_SPRITES sur la forme d'onde. La page 2 de BEAT JUMP choisit l'un des huit premiers packs ou désactive l'overlay. Désactivé sauf si le répertoire USB est présent."
+  },
+  "firmwares": [
+    "1.19"
+  ],
+  "default": false,
+  "order": 60,
+  "category": "screen",
+  "runtime_directory": "sprites",
+  "namespace": "sprites",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_sprites_decl.h",
+    "rx3_sprites_logic.h",
+    "rx3_sprites_menu.h",
+    "rx3_sprites_pads.h",
+    "rx3_sprites_feature.h",
+    "rx3_sprites_module.c"
+  ]
+}
