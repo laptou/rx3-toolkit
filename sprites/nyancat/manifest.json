@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "name": "nyancat",
+  "layout": "sequence",
+  "width": 256,
+  "height": 158,
+  "frame_count": 24,
+  "mode": "beat",
+  "fps_num": 8,
+  "fps_den": 1,
+  "frames_per_beat": 12,
+  "beats_per_loop": 2,
+  "anchor": "center"
+}

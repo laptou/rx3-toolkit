@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "name": "charizard",
+  "layout": "sequence",
+  "width": 64,
+  "height": 64,
+  "frame_count": 16,
+  "mode": "fps",
+  "fps_num": 8,
+  "fps_den": 1,
+  "frames_per_beat": 0,
+  "beats_per_loop": 0,
+  "anchor": "center"
+}
