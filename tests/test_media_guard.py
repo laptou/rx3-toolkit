@@ -32,7 +32,12 @@ def function(name: str) -> str:
     return match.group(0)
 
 
-PREAMBLE = "say() { :; }\n" + function("media_topology_is_unsafe") + function("rbp_alive")
+PREAMBLE = (
+    "say() { :; }\n"
+    + function("mount_base_device")
+    + function("media_topology_is_unsafe")
+    + function("rbp_alive")
+)
 
 
 def run_shell(body: str, proc_root: Path) -> subprocess.CompletedProcess[str]:
@@ -69,6 +74,30 @@ class MediaTopologyTests(unittest.TestCase):
             "/dev/sdb1 /media/usb2/THEIRS vfat rw 0 0\n"), 0)
         self.assertIn("/media/usb2/THEIRS", self.verdict_reason)
         self.assertIn("/dev/sdb1", self.verdict_reason)
+        self.assertNotIn("invalid partition layout", self.verdict_reason)
+
+    def test_a_second_partition_of_our_own_stick_is_a_layout_fault(self):
+        """The player mounts every readable partition, so a stick carrying an
+        EFI partition beside its data partition presents two mounts. Reported as
+        "another USB" that fault is invisible: the drive defers on every
+        insertion and nothing says why. The base block device is what separates
+        the two cases -- /dev/sda1 and /dev/sda2 are one stick, /dev/sda1 and
+        /dev/sdb1 are two."""
+        self.assertEqual(self.guard(
+            "/dev/sda1 /media/usb1/EFI vfat rw 0 0\n"
+            "/dev/sda2 /media/usb1/RX3 vfat rw 0 0\n"), 0)
+        self.assertIn("invalid partition layout", self.verdict_reason)
+        self.assertIn("/media/usb1/EFI", self.verdict_reason)
+        self.assertNotIn("other USB", self.verdict_reason)
+
+    def test_a_layout_fault_is_named_before_a_rival_drive(self):
+        """Both faults at once. The stick cannot work at all, so that is the one
+        worth reporting; the other drive is transient and clears itself."""
+        self.assertEqual(self.guard(
+            "/dev/sda1 /media/usb1/RX3 vfat rw 0 0\n"
+            "/dev/sda2 /media/usb1/EFI vfat rw 0 0\n"
+            "/dev/sdb1 /media/usb2/THEIRS vfat rw 0 0\n"), 0)
+        self.assertIn("invalid partition layout", self.verdict_reason)
 
     def test_an_unreadable_table_defers(self):
         """Not knowing is treated as unsafe, not as an empty table."""
