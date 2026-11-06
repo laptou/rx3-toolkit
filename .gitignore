@@ -1,3 +1,9 @@
+# The nix dev shell. The global ignore file drops these names everywhere; this
+# repository ships them on purpose, and a repository rule outranks it.
+!/flake.nix
+!/flake.lock
+!/.envrc
+
 # Build and generated packages
 /build/
 /dist/
@@ -48,6 +54,7 @@ CLAUDE.local.md
 *.tar.xz
 
 # Dependencies, caches and coverage
+/.direnv/
 /.venv*/
 /venv*/
 **/node_modules/
