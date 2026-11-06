@@ -136,13 +136,25 @@ core_after_launch()
         say "OK: performance core still active from the previous insertion"
         return 0
     fi
+    # The logging module points the hook's log at the drive, so the RAM default
+    # is then either absent or stale, and asking it whether the hook came up
+    # answers no for a core that is demonstrably running. Ask where the hook was
+    # told to write; the default is only for a run with no logging module.
+    _core_log=${RX3_LOG_FILE:-$CORE_LOG}
     if ready_file_matches_pid "$CORE_READY" "$NEW" &&
-       grep -q 'RX3 performance hook active' "$CORE_LOG" 2>/dev/null; then
+       grep -q 'RX3 performance hook active' "$_core_log" 2>/dev/null; then
         say "OK: performance core active"
+        _core_active=0
     else
         say "WARNING: rbp is active but the performance core is inactive"
+        _core_active=1
     fi
-    cat "$CORE_LOG" >> "$LOG" 2>/dev/null
+    # The RAM log dies with the power and the drive copy does not, so only the
+    # volatile one is worth copying -- onto itself it just doubles every line.
+    if [ "$_core_log" = "$CORE_LOG" ]; then
+        cat "$_core_log" >> "$LOG" 2>/dev/null || :
+    fi
+    return $_core_active
 }
 
 register_prepare_hook core_prepare
