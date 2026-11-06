@@ -13,6 +13,7 @@ It produces `RX3_RUNTIME/session.txt` at the root of the stick. Read it from you
 
 | Line | What it means |
 | --- | --- |
+| `build: <commit> <time>` | The tree this drive was built from and when. The player has no clock, so this is the only way to say which build a log belongs to; `mod.txt` opens with the same line. |
 | `=== complete ===` | The run finished. This is what you want to see. |
 | `OK: rbp active` | The player was restarted and came back. |
 | `nothing to apply: ...` | Everything you picked was already running. Not an error. |

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 import importlib.util
+import json
 import pathlib
 import tempfile
 import unittest
@@ -34,6 +35,64 @@ def dependencies_met_late(patches):
         ]
         seen.add(patch.patch_id)
     return offences
+
+
+class BuildStampTests(unittest.TestCase):
+    """The player has no clock, so a log on the drive cannot say when it was
+    written. Every drive therefore carries the tree and the moment it was built
+    from, and writes both into the logs it produces."""
+
+    def test_the_runtime_carries_the_marker_the_build_replaces(self):
+        script = (REPOSITORY / "mod/autoexec.sh").read_text()
+        self.assertIn(build_module.BUILD_PLACEHOLDER, script)
+
+    def test_stamping_refuses_a_runtime_with_no_marker(self):
+        """Silently shipping an unstamped runtime would leave every future log
+        anonymous, which is the state this exists to end."""
+        with self.assertRaises(ValueError):
+            build_module.stamp_runtime("#!/bin/sh\n", "abc1234 2026-01-01T00:00:00+0000")
+
+    def test_the_identity_names_the_commit_the_dirt_and_the_time(self):
+        identity = build_module.build_identity(REPOSITORY)
+        self.assertRegex(
+            identity,
+            r"^[0-9a-f]{7,}(-dirty)? \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}$",
+        )
+
+    def test_an_uncommitted_tree_says_so(self):
+        """A commit that does not contain what was built is worse than no
+        commit at all, and `git status` is the only thing that can say."""
+        answers = {"rev-parse": "abc1234", "status": ""}
+        with unittest.mock.patch.object(
+            build_module, "_git_output",
+            side_effect=lambda root, *args: answers[args[0]],
+        ):
+            clean = build_module.build_identity(REPOSITORY)
+        answers["status"] = " M mod/autoexec.sh"
+        with unittest.mock.patch.object(
+            build_module, "_git_output",
+            side_effect=lambda root, *args: answers[args[0]],
+        ):
+            dirty = build_module.build_identity(REPOSITORY)
+        self.assertTrue(clean.startswith("abc1234 "))
+        self.assertTrue(dirty.startswith("abc1234-dirty "))
+
+    def test_a_built_image_carries_the_stamp_and_the_manifest_records_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            key = directory / "aes256.key"
+            key.write_bytes(b"0123456789012345678901234567890\n")
+            result = build_runtime(
+                "1.19", ["keyshift"], key, directory, root=REPOSITORY
+            )
+            plain = load_firmware_codec().read_autoexec(result.output, key)
+            self.assertNotIn(build_module.BUILD_PLACEHOLDER.encode(), plain)
+            self.assertRegex(
+                plain,
+                rb'RX3_BUILD="[0-9a-f]{7,}(-dirty)? \d{4}-\d{2}-\d{2}T',
+            )
+            manifest = json.loads((directory / build_module.MANIFEST_NAME).read_text())
+            self.assertRegex(manifest["build"], r"^[0-9a-f]{7,}(-dirty)? ")
 
 
 class DurableInstallTests(unittest.TestCase):

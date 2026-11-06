@@ -27,6 +27,42 @@ ProgressCallback = Callable[[str], None]
 # own manifest, which sits in the same place for the same reason.
 MANIFEST_NAME = "rx3-mod-manifest.json"
 
+# The runtime carries its own build stamp, so a log can name the build that
+# wrote it. The build replaces this marker in the staged copy of autoexec.sh.
+BUILD_PLACEHOLDER = "@@RX3_BUILD@@"
+
+
+def _git_output(root: pathlib.Path, *arguments: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            capture_output=True, text=True,
+        )
+    except OSError:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def build_identity(root: pathlib.Path) -> str:
+    """The tree and the moment a drive was built from, as one string.
+
+    A short commit names the tree, `-dirty` says the tree was not that commit,
+    and the build time separates two builds of the same commit. It travels in
+    the runtime and comes back out of the drive's own logs, which is the only
+    way to tell those logs apart: the player has no clock.
+    """
+    commit = _git_output(root, "rev-parse", "--short", "HEAD") or "unknown"
+    dirty = _git_output(root, "status", "--porcelain", "--untracked-files=no")
+    suffix = "-dirty" if dirty else ""
+    return f"{commit}{suffix} {time.strftime('%Y-%m-%dT%H:%M:%S%z')}"
+
+
+def stamp_runtime(script: str, identity: str) -> str:
+    """Put the build's name where the runtime writes it into its own log."""
+    if BUILD_PLACEHOLDER not in script:
+        raise ValueError("mod/autoexec.sh carries no build stamp marker")
+    return script.replace(BUILD_PLACEHOLDER, identity)
+
 
 class Cancelled(Exception):
     """The operator stopped the build."""
@@ -593,6 +629,7 @@ def write_manifest(
     modules: Sequence[str],
     size: int,
     digest: str,
+    build: str,
 ) -> pathlib.Path:
     """Record what was written, beside what was written.
 
@@ -608,6 +645,7 @@ def write_manifest(
     manifest.write_text(json.dumps({
         "format": 1,
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "build": build,
         "firmware": firmware,
         "modules": list(modules),
         "bytes": size,
@@ -696,7 +734,16 @@ def build_runtime(
         staging = pathlib.Path(temporary) / "runtime"
         modules = staging / "modules"
         modules.mkdir(parents=True)
-        shutil.copy2(root / "mod/autoexec.sh", staging / "autoexec.sh")
+        identity = build_identity(root)
+        runtime_script = staging / "autoexec.sh"
+        runtime_script.write_text(
+            stamp_runtime(
+                (root / "mod/autoexec.sh").read_text(encoding="utf-8"), identity
+            ),
+            encoding="utf-8",
+            newline="",
+        )
+        runtime_script.chmod(0o644)
         library = staging / "lib"
         library.mkdir()
         shutil.copy2(root / "mod/lib/module-api.sh", library / "module-api.sh")
@@ -756,6 +803,6 @@ def build_runtime(
             temporary_output.unlink(missing_ok=True)
 
     installed = tuple(patch.patch_id for patch in selected)
-    write_manifest(output_directory, firmware, installed, size, digest)
+    write_manifest(output_directory, firmware, installed, size, digest, identity)
     notify(Message("job.done"))
     return BuildResult(final_output, size, digest, installed)

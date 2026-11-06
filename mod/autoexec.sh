@@ -20,6 +20,13 @@ case "$SAFE_MODE_RESULT" in
     10|11) exit 0 ;;
     *) exit 0 ;;
 esac
+# The tree and the moment this drive was built from, stamped in by
+# app/runtime/build.py while it stages. The deck has no clock, so every
+# timestamp on the drive carries whatever the writing host or filesystem had,
+# and two runs cannot be ordered by them. This line is what says which build
+# wrote a log. A drive still carrying the marker was staged by hand, and says
+# so rather than claiming a build it does not have.
+RX3_BUILD="@@RX3_BUILD@@"
 OUT="$USB/RX3_RUNTIME"
 LOG="$OUT/session.txt"
 RBP=/root/pdj/rbp
@@ -283,6 +290,13 @@ fi
 say "loaded modules:${LOADED_MODULES:- none}"
 
 say "=== RX3 volatile runtime, uid $(id -u) ==="
+case "$RX3_BUILD" in
+    @*) say "build: hand-staged runtime, no build stamp" ;;
+    *) say "build: $RX3_BUILD" ;;
+esac
+# The hook keeps its own log, and it is the one an operator reads when a
+# feature is missing. It stamps that file from the same string.
+export RX3_BUILD_ID="$RX3_BUILD"
 say "firmware revision: $(cat /tmp/smdj2.rev 2>/dev/null || cat /tmp/smdj.rev 2>/dev/null)"
 if [ "$LOGGING" = "1" ]; then
     say ""
