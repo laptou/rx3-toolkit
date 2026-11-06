@@ -1,12 +1,16 @@
 /* SPDX-License-Identifier: MPL-2.0
- * The artist and the comment for the file a deck loaded.
+ * The title, the artist and the comment for the file a deck loaded.
  *
- * DBIF_MusicInfo carries the id, the title and the path only: the player's
- * own play screen never shows the artist on a standalone USB deck, so the DB
- * record has no artist or comment to copy. The worker reads them from the
- * file's tags instead, on its own thread, so a slow USB read cannot hold up
- * the player. The formats are the ones firmware 1.19 accepts: MP3/AIFF/WAV
- * (ID3v2, or the native AIFF/WAV fields) and MP4/AAC (the ilst atoms).
+ * DBIF_MusicInfo carries the id, the title and the path only, and the player
+ * reaches the load hook with its shared, cleared preview record often enough
+ * that the title copied from it arrives empty while the path is always there.
+ * The file's own tag is the fallback that keeps the field populated. On a
+ * standalone USB deck the play screen never shows an artist either, so the DB
+ * record has no artist or comment to copy at all. The worker reads all three
+ * from the file's tags instead, on its own thread, so a slow USB read cannot
+ * hold up the player. The formats are the ones firmware 1.19 accepts:
+ * MP3/AIFF/WAV (ID3v2, or the native AIFF/WAV fields) and MP4/AAC (the ilst
+ * atoms).
  *
  * Everything here is byte-bounded and reads only the bytes a field needs.
  */
@@ -19,6 +23,7 @@
 #define NP_TAG_FIELD_BYTES 4096u
 
 struct now_playing_tags {
+    uint16_t title[NOW_PLAYING_TITLE_UNITS];
     uint16_t artist[NOW_PLAYING_ARTIST_UNITS];
     uint16_t comment[NOW_PLAYING_COMMENT_UNITS];
 };
@@ -251,13 +256,26 @@ static void np_id3v2(int fd, unsigned long base, struct now_playing_tags *tags)
         if (!read_size)
             break;
 
-        int wanted_artist = version == 2u
-            ? (frame[0] == 'T' && frame[1] == 'P' && frame[2] == '1')
-            : (memcmp(frame, "TPE1", 4) == 0);
         int wanted_comment = version == 2u
             ? (frame[0] == 'C' && frame[1] == 'O' && frame[2] == 'M')
             : (memcmp(frame, "COMM", 4) == 0);
-        if (wanted_artist || wanted_comment) {
+        uint16_t *field = 0;
+        unsigned int units = 0;
+        if (version == 2u
+                ? (frame[0] == 'T' && frame[1] == 'T' && frame[2] == '2')
+                : (memcmp(frame, "TIT2", 4) == 0)) {
+            field = tags->title;
+            units = NOW_PLAYING_TITLE_UNITS;
+        } else if (version == 2u
+                       ? (frame[0] == 'T' && frame[1] == 'P' && frame[2] == '1')
+                       : (memcmp(frame, "TPE1", 4) == 0)) {
+            field = tags->artist;
+            units = NOW_PLAYING_ARTIST_UNITS;
+        } else if (wanted_comment) {
+            field = tags->comment;
+            units = NOW_PLAYING_COMMENT_UNITS;
+        }
+        if (field) {
             uint8_t buffer[NP_TAG_FIELD_BYTES];
             unsigned int length = read_size;
             if (np_read_at(fd, at + header_size, buffer, length)) {
@@ -271,21 +289,17 @@ static void np_id3v2(int fd, unsigned long base, struct now_playing_tags *tags)
                     }
                     length = out;
                 }
-                if (wanted_artist) {
-                    np_id3_text(tags->artist, NOW_PLAYING_ARTIST_UNITS,
-                                buffer, length, 0u);
-                } else {
+                if (wanted_comment) {
                     unsigned int skip = 3u;   /* language */
                     skip = np_id3_descriptor(buffer, length, 1u + skip,
                                              buffer[0]);
-                    np_id3_text(tags->comment, NOW_PLAYING_COMMENT_UNITS,
-                                buffer, length, skip - 1u);
+                    np_id3_text(field, units, buffer, length, skip - 1u);
+                } else {
+                    np_id3_text(field, units, buffer, length, 0u);
                 }
             }
-            at += header_size + advance;
-        } else {
-            at += header_size + advance;
         }
+        at += header_size + advance;
     }
 }
 
@@ -297,12 +311,16 @@ static int np_id3v1(int fd, unsigned long size, struct now_playing_tags *tags)
         return 0;
     if (tag[0] != 'T' || tag[1] != 'A' || tag[2] != 'G')
         return 0;
+    if (!tags->title[0])
+        (void)np_latin1_copy(tags->title, NOW_PLAYING_TITLE_UNITS,
+                             tag + 3, 30u);
     if (!tags->artist[0])
         (void)np_latin1_copy(tags->artist, NOW_PLAYING_ARTIST_UNITS,
                              tag + 33, 30u);
     if (!tags->comment[0])
         (void)np_latin1_copy(tags->comment, NOW_PLAYING_COMMENT_UNITS,
                              tag + 97, 30u);
+    np_trim(tags->title, NOW_PLAYING_TITLE_UNITS);
     np_trim(tags->artist, NOW_PLAYING_ARTIST_UNITS);
     np_trim(tags->comment, NOW_PLAYING_COMMENT_UNITS);
     return 1;
@@ -330,35 +348,43 @@ static void np_riff_chunks(int fd, unsigned long start, unsigned long end,
                 form[0] == 'I' && form[1] == 'N' && form[2] == 'F' &&
                 form[3] == 'O')
                 np_riff_chunks(fd, data + 4u, data + size, 1, tags);
-        } else if (little &&
-                   ((header[0] == 'I' && header[1] == 'A' && header[2] == 'R' &&
-                     header[3] == 'T') ||
-                    (header[0] == 'I' && header[1] == 'C' && header[2] == 'M' &&
-                     header[3] == 'T'))) {
-            uint8_t text[NP_TAG_FIELD_BYTES];
-            unsigned int length = size > sizeof(text) ? (unsigned int)sizeof(text)
-                                                      : (unsigned int)size;
-            if (np_read_at(fd, data, text, length)) {
-                uint16_t *field = header[1] == 'A' ? tags->artist : tags->comment;
-                unsigned int units = header[1] == 'A'
-                    ? NOW_PLAYING_ARTIST_UNITS : NOW_PLAYING_COMMENT_UNITS;
-                (void)np_utf8_copy(field, units, text, length);
-                np_trim(field, units);
+        } else {
+            /* INAM/NAME carry the title; IART/AUTH and ICMT/ANNO the rest. */
+            uint16_t *field = 0;
+            unsigned int units = 0;
+            if (little && header[0] == 'I' && header[1] == 'N' &&
+                header[2] == 'A' && header[3] == 'M') {
+                field = tags->title;
+                units = NOW_PLAYING_TITLE_UNITS;
+            } else if (!little && header[0] == 'N' && header[1] == 'A' &&
+                       header[2] == 'M' && header[3] == 'E') {
+                field = tags->title;
+                units = NOW_PLAYING_TITLE_UNITS;
+            } else if (little &&
+                       ((header[0] == 'I' && header[1] == 'A' && header[2] == 'R' &&
+                         header[3] == 'T') ||
+                        (header[0] == 'I' && header[1] == 'C' && header[2] == 'M' &&
+                         header[3] == 'T'))) {
+                field = header[1] == 'A' ? tags->artist : tags->comment;
+                units = header[1] == 'A' ? NOW_PLAYING_ARTIST_UNITS
+                                         : NOW_PLAYING_COMMENT_UNITS;
+            } else if (!little &&
+                       ((header[0] == 'A' && header[1] == 'U' && header[2] == 'T' &&
+                         header[3] == 'H') ||
+                        (header[0] == 'A' && header[1] == 'N' && header[2] == 'N' &&
+                         header[3] == 'O'))) {
+                field = header[1] == 'U' ? tags->artist : tags->comment;
+                units = header[1] == 'U' ? NOW_PLAYING_ARTIST_UNITS
+                                         : NOW_PLAYING_COMMENT_UNITS;
             }
-        } else if (!little &&
-                   ((header[0] == 'A' && header[1] == 'U' && header[2] == 'T' &&
-                     header[3] == 'H') ||
-                    (header[0] == 'A' && header[1] == 'N' && header[2] == 'N' &&
-                     header[3] == 'O'))) {
-            uint8_t text[NP_TAG_FIELD_BYTES];
-            unsigned int length = size > sizeof(text) ? (unsigned int)sizeof(text)
-                                                      : (unsigned int)size;
-            if (np_read_at(fd, data, text, length)) {
-                uint16_t *field = header[1] == 'U' ? tags->artist : tags->comment;
-                unsigned int units = header[1] == 'U'
-                    ? NOW_PLAYING_ARTIST_UNITS : NOW_PLAYING_COMMENT_UNITS;
-                (void)np_utf8_copy(field, units, text, length);
-                np_trim(field, units);
+            if (field) {
+                uint8_t text[NP_TAG_FIELD_BYTES];
+                unsigned int length = size > sizeof(text)
+                    ? (unsigned int)sizeof(text) : (unsigned int)size;
+                if (np_read_at(fd, data, text, length)) {
+                    (void)np_utf8_copy(field, units, text, length);
+                    np_trim(field, units);
+                }
             }
         }
         at = data + size + (size & 1u);
@@ -448,6 +474,8 @@ static void np_mp4(int fd, struct now_playing_tags *tags)
     unsigned long size = np_file_size(fd);
     if (size < 12u || !np_read_at(fd, 0, header, sizeof(header)))
         return;
+    (void)np_mp4_field(fd, 0, size, 0xa96e616du, tags->title,
+                       NOW_PLAYING_TITLE_UNITS, 0u);
     (void)np_mp4_field(fd, 0, size, 0xa9415254u, tags->artist,
                        NOW_PLAYING_ARTIST_UNITS, 0u);
     (void)np_mp4_field(fd, 0, size, 0xa9636d74u, tags->comment,
@@ -476,7 +504,7 @@ static int np_read_tags(const char *path, struct now_playing_tags *tags)
 
     if (header[0] == 'I' && header[1] == 'D' && header[2] == '3') {
         np_id3v2(fd, 0, tags);
-        if (!tags->artist[0] || !tags->comment[0])
+        if (!tags->title[0] || !tags->artist[0] || !tags->comment[0])
             (void)np_id3v1(fd, size, tags);
     } else if (header[0] == 'R' && header[1] == 'I' && header[2] == 'F' &&
                header[3] == 'F' && header[8] == 'W' && header[9] == 'A' &&

@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#define NOW_PLAYING_TITLE_UNITS 128u
 #define NOW_PLAYING_ARTIST_UNITS 128u
 #define NOW_PLAYING_COMMENT_UNITS 256u
 #include "mod/modules/now-playing/rx3_now_playing_tags.h"
@@ -59,49 +60,41 @@ static void utf8(uint16_t *text)
     }
 }
 
-static int check(const char *path, const char *artist, const char *comment)
+/* The deck keeps text as UTF-16; every field here is Latin-1 representable. */
+static int compare(const char *path, const char *name, const uint16_t *text,
+                   unsigned int units, const char *want)
+{
+    uint8_t got[512];
+    unsigned int at = 0;
+    while (at < units && text[at] && at + 1u < sizeof(got)) {
+        got[at] = (uint8_t)text[at];
+        at++;
+    }
+    got[at] = 0;
+    if (strcmp((const char *)got, want) == 0)
+        return 0;
+    printf("%s: %s ", path, name);
+    utf8((uint16_t *)text);
+    printf(" want %s\n", want);
+    return 1;
+}
+
+static int check(const char *path, const char *title, const char *artist,
+                 const char *comment)
 {
     struct now_playing_tags tags;
-    uint8_t got[512], want[512];
-    unsigned int at = 0, expected = 0;
     if (!np_read_tags(path, &tags)) {
         printf("%s: no tags read\n", path);
         return 1;
     }
-    if (!tags.artist[0] || !tags.comment[0]) {
-        printf("%s: artist=[%s] comment=[%s]\n", path, (const char *)got,
-               (const char *)got);
+    if (!tags.title[0] || !tags.artist[0] || !tags.comment[0]) {
+        printf("%s: a field is empty\n", path);
         return 1;
     }
-    while (tags.artist[at] && at + 1u < sizeof(got)) {
-        got[at] = (uint8_t)tags.artist[at];
-        at++;
-    }
-    got[at] = 0;
-    while (*artist && expected + 1u < sizeof(want))
-        want[expected++] = (uint8_t)*artist++;
-    want[expected] = 0;
-    if (strcmp((const char *)got, (const char *)want) != 0) {
-        printf("%s: artist ", path);
-        utf8(tags.artist);
-        printf(" want %s\n", (const char *)want);
+    if (compare(path, "title", tags.title, NOW_PLAYING_TITLE_UNITS, title) ||
+        compare(path, "artist", tags.artist, NOW_PLAYING_ARTIST_UNITS, artist) ||
+        compare(path, "comment", tags.comment, NOW_PLAYING_COMMENT_UNITS, comment))
         return 1;
-    }
-    at = expected = 0;
-    while (tags.comment[at] && at + 1u < sizeof(got)) {
-        got[at] = (uint8_t)tags.comment[at];
-        at++;
-    }
-    got[at] = 0;
-    while (*comment && expected + 1u < sizeof(want))
-        want[expected++] = (uint8_t)*comment++;
-    want[expected] = 0;
-    if (strcmp((const char *)got, (const char *)want) != 0) {
-        printf("%s: comment ", path);
-        utf8(tags.comment);
-        printf(" want %s\n", (const char *)want);
-        return 1;
-    }
     remove(path);
     return 0;
 }
@@ -114,6 +107,7 @@ static void write_mp3(const char *path, int version1)
         uint8_t tag[128];
         memset(tag, 0, sizeof(tag));
         memcpy(tag, "TAG", 3);
+        memcpy(tag + 3, "Id3 Title", 9);
         memcpy(tag + 33, "Id3 Artist", 10);
         memcpy(tag + 97, "Id3 Comment", 11);
         fwrite("MPEGDATA", 1, 8, file);
@@ -122,8 +116,10 @@ static void write_mp3(const char *path, int version1)
         return;
     }
     {
-        uint8_t tpe[64], comm[64], tag[256];
+        uint8_t tit[64], tpe[64], comm[64], tag[256];
         unsigned int at = 0;
+        tit[0] = 3;                       /* UTF-8 */
+        memcpy(tit + 1, "Tag Title", 9);
         tpe[0] = 3;                       /* UTF-8 */
         memcpy(tpe + 1, "Tag Artist", 10);
         comm[0] = 3;
@@ -133,6 +129,9 @@ static void write_mp3(const char *path, int version1)
         memcpy(tag, "ID3", 3);
         tag[3] = 3; tag[4] = 0; tag[5] = 0;
         at = 10;
+        memcpy(tag + at, "TIT2", 4); put_be32(tag + at + 4, 10);
+        tag[at + 8] = 0; tag[at + 9] = 0;
+        memcpy(tag + at + 10, tit, 10); at += 20;
         memcpy(tag + at, "TPE1", 4); put_be32(tag + at + 4, 11);
         tag[at + 8] = 0; tag[at + 9] = 0;
         memcpy(tag + at + 10, tpe, 11); at += 21;
@@ -172,6 +171,7 @@ static void write_wav(const char *path)
     uint8_t list[12] = {'L', 'I', 'S', 'T', 0, 0, 0, 0, 'I', 'N', 'F', 'O'};
     fwrite(header, 1, 12, file);
     fwrite(list, 1, 12, file);
+    chunk_le(file, "INAM", "Wav Title");
     chunk_le(file, "IART", "Wav Artist");
     chunk_le(file, "ICMT", "Wav Comment");
     {
@@ -204,6 +204,7 @@ static void write_aiff(const char *path)
     FILE *file = create(path);
     uint8_t header[12] = {'F', 'O', 'R', 'M', 0, 0, 0, 0, 'A', 'I', 'F', 'F'};
     fwrite(header, 1, 12, file);
+    chunk_be(file, "NAME", "Aiff Title");
     chunk_be(file, "AUTH", "Aiff Artist");
     chunk_be(file, "ANNO", "Aiff Comment");
     {
@@ -245,6 +246,7 @@ static void write_mp4(const char *path)
     fwrite(ftyp, 1, sizeof(ftyp), file);
     scratch = tmpfile();
     if (!scratch) return;
+    ilst_entry(scratch, "\xa9""nam", "Mp4 Title");
     ilst_entry(scratch, "\xa9""ART", "Mp4 Artist");
     ilst_entry(scratch, "\xa9""cmt", "Mp4 Comment");
     ilst_size = (unsigned long)ftell(scratch);
@@ -280,19 +282,19 @@ static void write_mp4(const char *path)
 int main(void)
 {
     write_mp3("/tmp/rx3-tags-v23.mp3", 0);
-    if (check("/tmp/rx3-tags-v23.mp3", "Tag Artist", "Tag Comment"))
+    if (check("/tmp/rx3-tags-v23.mp3", "Tag Title", "Tag Artist", "Tag Comment"))
         return 1;
     write_mp3("/tmp/rx3-tags-v1.mp3", 1);
-    if (check("/tmp/rx3-tags-v1.mp3", "Id3 Artist", "Id3 Comment"))
+    if (check("/tmp/rx3-tags-v1.mp3", "Id3 Title", "Id3 Artist", "Id3 Comment"))
         return 2;
     write_wav("/tmp/rx3-tags.wav");
-    if (check("/tmp/rx3-tags.wav", "Wav Artist", "Wav Comment"))
+    if (check("/tmp/rx3-tags.wav", "Wav Title", "Wav Artist", "Wav Comment"))
         return 3;
     write_aiff("/tmp/rx3-tags.aiff");
-    if (check("/tmp/rx3-tags.aiff", "Aiff Artist", "Aiff Comment"))
+    if (check("/tmp/rx3-tags.aiff", "Aiff Title", "Aiff Artist", "Aiff Comment"))
         return 4;
     write_mp4("/tmp/rx3-tags.m4a");
-    if (check("/tmp/rx3-tags.m4a", "Mp4 Artist", "Mp4 Comment"))
+    if (check("/tmp/rx3-tags.m4a", "Mp4 Title", "Mp4 Artist", "Mp4 Comment"))
         return 5;
     printf("now-playing tags: OK\n");
     return 0;

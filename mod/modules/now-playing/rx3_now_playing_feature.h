@@ -26,8 +26,7 @@ struct now_playing_deck {
 struct now_playing_tag_state {
     uint32_t track_id;
     int      tried;
-    uint16_t artist[NOW_PLAYING_ARTIST_UNITS];
-    uint16_t comment[NOW_PLAYING_COMMENT_UNITS];
+    struct now_playing_tags tags;
 };
 
 static struct installed_hook now_playing_status_hook;
@@ -107,6 +106,9 @@ static int hooked_now_playing_load(void *player, const void *music)
     }
     deck->title[NOW_PLAYING_TITLE_UNITS - 1u] = 0;
     deck->path[NOW_PLAYING_PATH_BYTES - 1u] = 0;
+    /* The worker then takes the title from the file's tag for the datagram. */
+    if (deck->loaded && !deck->title[0])
+        framework->log_line("now playing: the loaded record carries no title");
     __sync_synchronize();
     (void)__sync_add_and_fetch(&deck->revision, 1u);
     now_playing_signal(1u << (unsigned int)index);
@@ -265,16 +267,6 @@ static void now_playing_read_deck(unsigned int index, struct now_playing_deck *c
     }
 }
 
-static const uint16_t *now_playing_tag_text(unsigned int index,
-                                            struct now_playing_tags *tags,
-                                            int comment)
-{
-    struct now_playing_tag_state *state = &now_playing_tags_state[index];
-    if (comment)
-        return state->tried ? state->comment : tags->comment;
-    return state->tried ? state->artist : tags->artist;
-}
-
 /* Read the file's tags once for this track. A missing or unreadable file is
    the ordinary case when the drive was pulled; the fields stay empty. */
 static void now_playing_load_tags(unsigned int index, const char *path,
@@ -282,17 +274,16 @@ static void now_playing_load_tags(unsigned int index, const char *path,
                                   struct now_playing_tags *tags)
 {
     struct now_playing_tag_state *state = &now_playing_tags_state[index];
-    memset(tags, 0, sizeof(*tags));
-    if (state->tried && state->track_id == track_id)
+    if (state->tried && state->track_id == track_id) {
+        *tags = state->tags;
         return;
+    }
+    memset(tags, 0, sizeof(*tags));
     state->track_id = track_id;
     state->tried = 1;
-    memset(state->artist, 0, sizeof(state->artist));
-    memset(state->comment, 0, sizeof(state->comment));
-    if (path[0] && np_read_tags(path, tags)) {
-        memcpy(state->artist, tags->artist, sizeof(state->artist));
-        memcpy(state->comment, tags->comment, sizeof(state->comment));
-    }
+    memset(&state->tags, 0, sizeof(state->tags));
+    if (path[0] && np_read_tags(path, tags))
+        state->tags = *tags;
 }
 
 /* Every datagram carries both decks whole, so a listener that missed one, or
@@ -336,16 +327,21 @@ static void now_playing_send(const char *reason)
         now_playing_signed(&text,
             ((now_playing_deck_int_fn)NOW_PLAYING_PLAY_MODE)(index));
         now_playing_literal(&text, ",\"title\":");
+        /* The record carries the title inline, but the player reaches the load
+           hook with its shared, cleared preview record often enough that the
+           field arrives empty while the path is always there. The file's own
+           tag is the fallback that keeps it populated. */
         now_playing_json_text(&text,
-            deck.loaded ? deck.title : now_playing_no_title,
+            !deck.loaded ? now_playing_no_title
+                         : (deck.title[0] ? deck.title : tags.title),
             NOW_PLAYING_TITLE_UNITS);
         now_playing_literal(&text, ",\"artist\":");
         now_playing_json_text(&text,
-            deck.loaded ? now_playing_tag_text(index, &tags, 0) : now_playing_no_title,
+            deck.loaded ? tags.artist : now_playing_no_title,
             NOW_PLAYING_ARTIST_UNITS);
         now_playing_literal(&text, ",\"comment\":");
         now_playing_json_text(&text,
-            deck.loaded ? now_playing_tag_text(index, &tags, 1) : now_playing_no_title,
+            deck.loaded ? tags.comment : now_playing_no_title,
             NOW_PLAYING_COMMENT_UNITS);
         now_playing_literal(&text, "}");
     }
