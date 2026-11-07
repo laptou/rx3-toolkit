@@ -20,6 +20,7 @@ class SwangModuleTests(unittest.TestCase):
         cls.module_sh = (base / "module.sh").read_text()
         cls.feature = (base / "rx3_swang_feature.h").read_text()
         cls.dsp = (base / "rx3_swang_dsp.h").read_text()
+        cls.labels = (base / "rx3_swang_labels.h").read_text()
         cls.manifest = json.loads((base / "manifest.json").read_text())
         cls.composition = (MODULES / "core/runtime/rx3_composition.c").read_text()
         cls.core_manifest = json.loads(
@@ -84,11 +85,19 @@ class SwangModuleTests(unittest.TestCase):
         self.assertNotIn("#include <math.h>", self.feature)
         self.assertNotIn("#include <math.h>", self.dsp)
 
-    def test_the_relabelled_artwork_is_dropped_not_faked(self):
+    def test_the_label_never_names_an_id_it_was_not_told(self):
+        # The caption is relabelled now, so the old "drop the artwork" guard is
+        # gone with the reason for it. What stays gone is every way of guessing
+        # an id or reading a record from the module: the sizes and the colours
+        # come from the record inside the core, and the id comes from the draw.
         for gone in ("rx3_relabel_image", "SPIRAL_CAPTION_FIRST",
-                     "rx3_label_mask", "rx3_swang_labels.h"):
+                     "stock_image", "replace_native"):
             self.assertNotIn(gone, self.feature)
-        self.assertNotIn("rx3_swang_labels.h", self.manifest["build_files"])
+        # No caption id is written down anywhere in the module.
+        for guessed in ("0x1445", "0x1446", "0x1447", "0x1448",
+                        "0x15a7", "0x15a8", "0x15a9"):
+            self.assertNotIn(guessed, self.feature)
+            self.assertNotIn(guessed, self.labels)
 
     def test_the_caption_ids_are_learned_not_guessed(self):
         # The SPIRAL caption is one of Pioneer's own images, and which id it
@@ -102,6 +111,23 @@ class SwangModuleTests(unittest.TestCase):
         # One watch per range: the same owner twice would replace the first.
         self.assertIn("&sw_caption_watch", self.feature)
         self.assertIn("&sw_tile_watch", self.feature)
+
+    def test_the_caption_is_painted_from_the_draw_not_from_a_guess(self):
+        # The band holds fourteen effects' captions and the deck decides which
+        # group is SPIRAL's, so the id arrives with the draw: the module asks
+        # for the ids it is shown, waits for the same one twice (the select
+        # grid draws every effect's caption in that band), and paints it.
+        self.assertIn("claim_drawn", self.labels)
+        self.assertIn("paint_masked_now", self.labels)
+        self.assertIn("#define SW_LABEL_CONFIRM 2u", self.labels)
+        self.assertIn("sw_label_streak < SW_LABEL_CONFIRM", self.labels)
+        self.assertIn("swang_labels_install();", self.feature)
+        self.assertIn("swang_labels_release();", self.feature)
+        # The mask is the stock caption's height, so SWANG sits on the same
+        # baseline as the relabels beside it.
+        self.assertIn("#define SW_LABEL_WIDTH 81u", self.labels)
+        self.assertIn("#define SW_LABEL_HEIGHT 16u", self.labels)
+        self.assertIn("sw_label_caption_coverage[1296]", self.labels)
 
     def test_the_halfbeat_path_says_what_it_did(self):
         # "no ticks on screen" has two very different causes -- the data path
@@ -118,7 +144,8 @@ class SwangModuleTests(unittest.TestCase):
     def test_build_inputs_are_declared(self):
         self.assertEqual(
             self.manifest["build_files"],
-            ["rx3_swang_dsp.h", "rx3_swang_feature.h", "rx3_swang_module.c"])
+            ["rx3_swang_dsp.h", "rx3_swang_feature.h", "rx3_swang_labels.h",
+             "rx3_swang_module.c"])
         self.assertEqual(self.manifest["category"], "beatjump")
 
 

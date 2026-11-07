@@ -548,6 +548,8 @@ static int swang_feature_configured(void)
     return flag && flag[0] == '1';
 }
 
+#include "rx3_swang_labels.h"
+
 /* Returns 0 on any refusal; the core then calls remove(), which takes out
    whatever part of this had already been put in. Without the operate and
    control claims spiral would play stock and the arrows would move its
@@ -573,6 +575,9 @@ static int swang_feature_install(void)
         framework->images->watch_ids(&sw_tile_watch, SW_TILE_FIRST,
                                      SW_TILE_LAST);
     }
+    /* The caption is painted from the draw instead: the band holds fourteen
+       effects and the deck decides which group is SPIRAL's. */
+    swang_labels_install();
     if (!framework->beatfx->claim_info(&sw_owner, sw_info))
         framework->log_line("swang: the play screen block stays stock");
     if (!framework->audio->claim_deck_stream(&sw_owner, sw_stream)) {
@@ -601,6 +606,7 @@ static int swang_feature_install(void)
 static void swang_feature_remove(void)
 {
     int detached;
+    swang_labels_release();
     framework->beatfx->unregister_owner(&sw_owner);
     framework->audio->release_deck_stream(&sw_owner);
     if (sw_frame_installed) {

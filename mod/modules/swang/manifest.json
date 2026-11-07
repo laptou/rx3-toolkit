@@ -30,6 +30,7 @@
   "build_files": [
     "rx3_swang_dsp.h",
     "rx3_swang_feature.h",
+    "rx3_swang_labels.h",
     "rx3_swang_module.c"
   ]
 }
