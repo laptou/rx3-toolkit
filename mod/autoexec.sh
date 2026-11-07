@@ -105,118 +105,6 @@ rbp_alive()
         [ "$(awk '{print $3}' "$PROC_ROOT/$1/stat" 2>/dev/null)" != "Z" ]
 }
 
-# The block device a mount came from, with its partition number removed.
-#
-# /dev/sda1 and /dev/sda2 are two partitions of one stick. Nothing else in the
-# mount table says so -- it lists devices and mount points, never the parent
-# disk -- so the trailing partition number is the only thing to strip. The
-# result is used for comparison only, never as a path: mmcblk0p1 and mmcblk0p2
-# both reduce to mmcblk0p, which groups them correctly without being a device.
-mount_base_device()
-{
-    _rx3_base=${1%/}
-    while :; do
-        case "$_rx3_base" in
-            *[0-9]) _rx3_base=${_rx3_base%[0-9]} ;;
-            *) break ;;
-        esac
-    done
-    printf '%s\n' "$_rx3_base"
-}
-
-# Whether stopping the player would interrupt something that is not ours, or
-# cannot work at all.
-#
-# Two drives in a B2B set: the other DJ is playing off theirs while this one is
-# inserted. Stopping rbp there cuts their audio. The mount table is the only
-# place that fact is visible from here, and a table we cannot read is treated
-# as unsafe rather than assumed empty.
-#
-# A second mount on the *same* block device is the other case, and it is not
-# about someone else's music: the player mounts every readable partition, so a
-# stick formatted with an EFI or vendor partition presents two mounts. The mod
-# cannot run from that, because the guard below would defer on every insertion
-# forever. It is reported as the layout fault it is, not as a rival drive.
-media_topology_is_unsafe()
-{
-    _rx3_ours=${1%/}
-    _rx3_mounts_file=${2:-$PROC_ROOT/mounts}
-    _rx3_own_count=0
-    _rx3_own_device=""
-    _rx3_own_base=""
-    _rx3_layout_count=0
-    OTHER_USB_MOUNT=""
-    OTHER_USB_DEVICE=""
-    LAYOUT_MOUNTS=""
-    MEDIA_GUARD_REASON=""
-    MEDIA_GUARD_KIND=""
-    [ -r "$_rx3_mounts_file" ] || {
-        MEDIA_GUARD_REASON="mount table unavailable"
-        MEDIA_GUARD_KIND=table
-        return 0
-    }
-    while read -r _rx3_device _rx3_mount _rx3_type _rx3_options _rx3_rest; do
-        case "$_rx3_mount" in
-            /media/usb[0-9]*/*)
-                if [ "$_rx3_mount" = "$_rx3_ours" ]; then
-                    _rx3_own_count=$((_rx3_own_count + 1))
-                    _rx3_own_device=$_rx3_device
-                elif [ -z "$OTHER_USB_MOUNT" ]; then
-                    OTHER_USB_DEVICE=$_rx3_device
-                    OTHER_USB_MOUNT=$_rx3_mount
-                fi
-                ;;
-        esac
-    done < "$_rx3_mounts_file"
-    if [ "$_rx3_own_count" != "1" ]; then
-        MEDIA_GUARD_REASON="runtime USB mount count is $_rx3_own_count (expected 1)"
-        MEDIA_GUARD_KIND=count
-        return 0
-    fi
-    if [ -n "$_rx3_own_device" ]; then
-        _rx3_own_base=$(mount_base_device "$_rx3_own_device")
-        while read -r _rx3_device _rx3_mount _rx3_type _rx3_options _rx3_rest; do
-            case "$_rx3_mount" in
-                /media/usb[0-9]*/*)
-                    [ "$_rx3_mount" = "$_rx3_ours" ] && continue
-                    [ "$(mount_base_device "$_rx3_device")" = "$_rx3_own_base" ] || continue
-                    _rx3_layout_count=$((_rx3_layout_count + 1))
-                    LAYOUT_MOUNTS="$LAYOUT_MOUNTS $_rx3_mount"
-                    ;;
-            esac
-        done < "$_rx3_mounts_file"
-        if [ "$_rx3_layout_count" != "0" ]; then
-            MEDIA_GUARD_REASON="invalid partition layout: $_rx3_own_base is mounted $_rx3_layout_count more time(s) (${_rx3_ours}${LAYOUT_MOUNTS}); the player mounts every partition, so the stick must carry exactly one"
-            MEDIA_GUARD_KIND=layout
-            return 0
-        fi
-    fi
-    if [ -n "$OTHER_USB_MOUNT" ]; then
-        MEDIA_GUARD_REASON="other USB mounted at $OTHER_USB_MOUNT (${OTHER_USB_DEVICE:-unknown})"
-        MEDIA_GUARD_KIND=other
-        return 0
-    fi
-    return 1
-}
-
-# Deferring is a success, not a failure: the drive can be reinserted when the
-# other one is out, and nothing has been written in the meantime.
-defer_for_unsafe_media()
-{
-    media_topology_is_unsafe "$1" || return 1
-    say "safe-load guard: $MEDIA_GUARD_REASON; not stopping rbp"
-    say "playback continues; the mod is deferred until a safe restart."
-    echo deferred > /tmp/rx3-patch.state
-    discard_runtime_stage
-    rm -rf "$TMP"
-    case "$MEDIA_GUARD_KIND" in
-        layout) say "=== complete (mod deferred: invalid partition layout) ===" ;;
-        *) say "=== complete (mod deferred: unsafe USB topology) ===" ;;
-    esac
-    sync
-    return 0
-}
-
 # Ten seconds of grace, then the signal that cannot be caught, then a scan for
 # anything still holding an rbp mapping. Returning failure here is the last
 # free abort: no guarded word has been written yet.
@@ -438,10 +326,6 @@ case " $LOADED_MODULES " in
         ;;
 esac
 
-if defer_for_unsafe_media "$USB"; then
-    exit 0
-fi
-
 run_hooks "$PREPARE_HOOKS" || {
     say "STOP: a prepare hook failed; no guarded word was written."
     discard_runtime_stage
@@ -472,9 +356,6 @@ echo applying > /tmp/rx3-patch.state
 # A restart is the expensive part of an insertion, so the log names what forced
 # it. On a drive that is merely being reinserted this line is the whole answer
 # to why the screen froze and the media list emptied.
-if defer_for_unsafe_media "$USB"; then
-    exit 0
-fi
 say "restart requested by:${RESTART_REQUESTED_BY:- unknown}"
 say "stopping rbp"
 if ! stop_rbp "$PID"; then
@@ -511,10 +392,9 @@ verify_words()
 # One generation of the player's own output, kept the way the session log is.
 #
 # It happens here and not beside the session log, which is rotated far above:
-# this point is past the lock, past the RAM-root guard, past the rbp identity
-# check and past every safe-load guard. A run that then correctly decides to do
-# nothing, the B2B case, must not have renamed a file on a volume it was never
-# going to touch.
+# this point is past the lock, past the RAM-root guard and past the rbp identity
+# check. A run that then decides to do nothing must not have renamed a file on
+# a volume it was never going to touch.
 PLAYER_LOGS_ROTATED=0
 rotate_player_logs()
 {
