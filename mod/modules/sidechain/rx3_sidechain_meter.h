@@ -39,6 +39,21 @@ static volatile unsigned sc_meter_blocks;
 
 static struct rx3_overlay sc_meter_overlay;
 static uint8_t sc_meter_level[SC_METER_COLUMNS];
+
+/* A few one-shot lines so a run on the deck says why the meter is or is not
+   on screen instead of leaving it to guesswork. Capped: this path runs on
+   the render thread and each line reaches the drive. */
+#define SC_METER_NOTES 8u
+static unsigned sc_meter_notes;
+static int sc_meter_wave_seen = -1;
+
+static void sc_meter_note(const char *line)
+{
+    if (sc_meter_notes >= SC_METER_NOTES)
+        return;
+    sc_meter_notes++;
+    framework->log_line(line);
+}
 static uint8_t sc_meter_cut[SC_METER_COLUMNS];
 static float sc_meter_shown_threshold_l2 = 1.0f;
 static unsigned sc_meter_head;
@@ -134,11 +149,17 @@ static void sc_meter_draw(void)
     framework->overlays->present(&sc_meter_overlay);
 }
 
-/* ui thread, from the draw watcher. open while helix is running. */
+/* ui thread. open while helix is running.
+   called from two places on purpose: the beat fx display block is rebuilt on
+   every play-screen refresh, and the draw watcher fires whenever the player
+   draws a stock image. either one is enough to keep the meter stepping, and
+   the first is the reliable clock of the two. */
 static void sc_meter_tick(void)
 {
     unsigned now = sc_now_ms();
     unsigned blocks;
+    int wave_up;
+    sc_meter_note("sidechain: the meter ticks");
     if (now - sc_meter_tick_ms < SC_METER_TICK_MS)
         return;
     sc_meter_tick_ms = now;
@@ -146,8 +167,15 @@ static void sc_meter_tick(void)
     if (blocks != sc_meter_seen_blocks) {
         sc_meter_seen_blocks = blocks;
         sc_meter_active_ms = now ? now : 1u;
+        sc_meter_note("sidechain: the compressor is folding blocks");
     }
-    if (!framework->overlays->wave_up() || !sc_meter_active_ms ||
+    wave_up = framework->overlays->wave_up() != 0;
+    if (wave_up != sc_meter_wave_seen) {
+        sc_meter_wave_seen = wave_up;
+        sc_meter_note(wave_up ? "sidechain: the waveform window is up"
+                              : "sidechain: the waveform window is not up");
+    }
+    if (!wave_up || !sc_meter_active_ms ||
         now - sc_meter_active_ms > SC_METER_IDLE_MS) {
         framework->overlays->release(&sc_owner);
         memset(&sc_meter_overlay, 0, sizeof(sc_meter_overlay));
@@ -161,10 +189,13 @@ static void sc_meter_tick(void)
         if (!framework->overlays->claim(&sc_owner, &rect,
                                         RX3_OVERLAY_BELOW, &sc_meter_overlay)) {
             sc_meter_failed_ms = now ? now : 1u;
-            framework->log_line("sidechain: meter window could not be created");
+            sc_meter_note("sidechain: meter window could not be created");
             return;
         }
         sc_meter_failed_ms = 0;
+        sc_meter_note("sidechain: the meter window is open");
+        framework->log_number("sidechain: meter slot = ",
+                              (unsigned long)sc_meter_overlay.slot);
         memset(sc_meter_level, 0, sizeof(sc_meter_level));
         memset(sc_meter_cut, 0, sizeof(sc_meter_cut));
     }

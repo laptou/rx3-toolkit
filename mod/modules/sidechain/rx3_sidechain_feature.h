@@ -181,14 +181,18 @@ static int sc_beat(void *innards, long delta)
     return 1;
 }
 
+/* the beat fx display block, rebuilt every play-screen refresh: the ratio
+   label goes out here, and the meter keeps step from the same turn. */
 static void sc_info(uint8_t *block)
 {
     if (*(const int *)block == BEAT_FX_DISPLAY_HELIX)
         *(uint32_t *)(block + 0x10u) = sc_ratio_beat_labels[sc_ratio_index];
+    sc_meter_tick();
 }
 
-/* the draw watcher: the core calls this after the player drew an image,
-   on its ui thread, and the meter keeps step from there. */
+/* the draw watcher: the core calls this after the player drew an image, on
+   its ui thread. a second clock for the meter, and the only one that runs
+   when the play screen is not the visible panel. */
 static void sc_drawn(unsigned image)
 {
     (void)image;
