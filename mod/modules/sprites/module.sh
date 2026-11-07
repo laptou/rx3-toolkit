@@ -44,7 +44,10 @@ sprites_prepare()
 sprites_after_launch()
 {
     [ -n "$RX3_SPRITES_DIR" ] || return 0
-    say "Sprites prepared: overlay follows the beat jump page 2 choice"
+    # A control nobody can find is a control that is not there. The bindings
+    # are not guessable, so the boot record says them.
+    say "Sprites: beat jump page 2, pads 1-8 pick a pack (the lit pad again is off); utility > on air display is sprite pulse"
+    say "Sprites choice: $(cat "$USB/RX3_RUNTIME/sprite-choice" 2>/dev/null || echo unset)"
 }
 
 register_prepare_hook sprites_prepare

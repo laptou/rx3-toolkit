@@ -18,11 +18,6 @@
 #define SC_METER_COLUMN 2
 #define SC_METER_COLUMNS (SC_METER_WIDTH / SC_METER_COLUMN)
 #define SC_METER_TICK_MS 33u
-/* the meter closes once helix has been off for this long. */
-/* how long the meter holds after the last block arrives. short enough that
-   deselecting helix feels immediate, long enough to ride out a pause in the
-   audio path. */
-#define SC_METER_IDLE_MS 150u
 #define SC_METER_FLOOR_DB 48.0f
 #define SC_METER_CUT_DB 24.0f
 
@@ -62,8 +57,18 @@ static float sc_meter_shown_threshold_l2 = 1.0f;
 static unsigned sc_meter_head;
 static unsigned sc_meter_tick_ms;
 static unsigned sc_meter_seen_blocks;
-static unsigned sc_meter_active_ms;
 static unsigned sc_meter_failed_ms;
+
+/* The meter belongs to the effect, not to the last audio block. Riding the
+   block timer held the window up for a further fifth of a second after a
+   deselect, so turning HELIX off took five frames to clear on screen. The
+   manager answers this on the ui thread, which is where the tick runs. */
+static int sc_meter_engaged(void)
+{
+    void *manager = framework->beatfx->manager ? framework->beatfx->manager()
+                                               : 0;
+    return manager && rx3_beatfx_on(manager, BEAT_FX_HELIX);
+}
 
 static void sc_meter_note_source(float level_l2, float threshold_l2)
 {
@@ -169,7 +174,6 @@ static void sc_meter_tick(void)
     blocks = sc_meter_blocks;
     if (blocks != sc_meter_seen_blocks) {
         sc_meter_seen_blocks = blocks;
-        sc_meter_active_ms = now ? now : 1u;
         sc_meter_note("sidechain: the compressor is folding blocks");
     }
     wave_up = framework->overlays->wave_up() != 0;
@@ -178,8 +182,7 @@ static void sc_meter_tick(void)
         sc_meter_note(wave_up ? "sidechain: the waveform window is up"
                               : "sidechain: the waveform window is not up");
     }
-    if (!wave_up || !sc_meter_active_ms ||
-        now - sc_meter_active_ms > SC_METER_IDLE_MS) {
+    if (!wave_up || !sc_meter_engaged()) {
         framework->overlays->release(&sc_owner);
         memset(&sc_meter_overlay, 0, sizeof(sc_meter_overlay));
         return;

@@ -82,8 +82,16 @@ class SidechainModuleTests(unittest.TestCase):
         self.assertIn('#include "rx3_sidechain_meter.h"', self.feature)
         self.assertIn("sc_meter_tick();", self.feature)
         self.assertIn("framework->overlays->wave_up()", self.meter)
-        self.assertIn("SC_METER_IDLE_MS", self.meter)
         self.assertIn("RX3_OVERLAY_BELOW", self.meter)
+
+    def test_the_meter_answers_the_effect_not_the_block_timer(self):
+        # the meter used to hold for SC_METER_IDLE_MS after the last audio
+        # block, so turning HELIX off left it on screen for five frames. the
+        # selection is the gate now, and it is read on the ui thread.
+        self.assertIn("sc_meter_engaged()", self.meter)
+        self.assertIn("rx3_beatfx_on(manager, BEAT_FX_HELIX)", self.meter)
+        self.assertNotIn("SC_METER_IDLE_MS", self.meter)
+        self.assertNotIn("sc_meter_active_ms", self.meter)
 
     def test_the_caption_is_measured_not_guessed(self):
         labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()

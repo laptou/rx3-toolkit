@@ -57,10 +57,65 @@ unsigned int rx3_image_register_bitmap(const void *owner,unsigned int source,
     }
     return 0;
 }
+/* A module that has to learn a caption's image id before it can paint one
+   asks here: the player draws the range, and the first draw of each id is
+   one line. The record is bounded by the range, so the log cannot run. */
+#define WATCH_LIMIT 4u
+#define WATCH_SPAN  128u
+struct image_watch {
+    const void *owner;
+    unsigned int first, last;
+    uint32_t seen[WATCH_SPAN / 32u];
+};
+static struct image_watch watches[WATCH_LIMIT];
+
+static void watch_reset(struct image_watch *watch, const void *owner,
+                        unsigned int first, unsigned int last)
+{
+    watch->owner = owner;
+    watch->first = first;
+    watch->last = last;
+    memset(watch->seen, 0, sizeof(watch->seen));
+}
+
+static int watch_ids(const void *owner, unsigned int first, unsigned int last)
+{
+    unsigned int slot;
+    if (!owner || first > last || last - first >= WATCH_SPAN) return 0;
+    for (slot = 0; slot < WATCH_LIMIT; slot++)
+        if (watches[slot].owner == owner) {
+            watch_reset(&watches[slot], owner, first, last);
+            return 1;
+        }
+    for (slot = 0; slot < WATCH_LIMIT; slot++)
+        if (!watches[slot].owner) {
+            watch_reset(&watches[slot], owner, first, last);
+            return 1;
+        }
+    return 0;
+}
+
+static void watch_note(unsigned int image)
+{
+    for (unsigned int slot = 0; slot < WATCH_LIMIT; slot++) {
+        struct image_watch *watch = &watches[slot];
+        unsigned int offset, bit;
+        if (!watch->owner || image < watch->first || image > watch->last)
+            continue;
+        offset = image - watch->first;
+        bit = 1u << (offset % 32u);
+        if (watch->seen[offset / 32u] & bit) continue;
+        watch->seen[offset / 32u] |= bit;
+        rx3_log_number("image drawn in the watched range = ", image);
+    }
+}
+
 static void unregister_owner(const void *owner)
 {
     for(unsigned int i=0;i<IMAGE_LIMIT;i++)
         if(variants[i].owner==owner) __atomic_store_n(&variants[i].owner,0,__ATOMIC_SEQ_CST);
+    for(unsigned int i=0;i<WATCH_LIMIT;i++)
+        if(watches[i].owner==owner) watch_reset(&watches[i],0,0,0);
 }
 unsigned int rx3_image_count(void)
 {
@@ -295,6 +350,7 @@ int rx3_image_is_light(void) { return light_selected; }
 void rx3_image_drawn(unsigned int image)
 {
     const struct rx3_image_policy *current = __atomic_load_n(&policy, __ATOMIC_SEQ_CST);
+    watch_note(image);
     if (current && current->drawn && image < RX3_STOCK_IMAGE_COUNT) current->drawn(image);
 }
 
@@ -403,5 +459,5 @@ const struct rx3_image_service rx3_images={
     register_recolour, unregister_owner, rx3_image_register_bitmap,
     replace_native, release_native, claim_variants, release_variants,
     variants_ready, native_image, publish_variant, select_variant, light_active,
-    replace_masked
+    replace_masked, watch_ids
 };

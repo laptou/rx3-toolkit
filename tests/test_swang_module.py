@@ -90,6 +90,31 @@ class SwangModuleTests(unittest.TestCase):
             self.assertNotIn(gone, self.feature)
         self.assertNotIn("rx3_swang_labels.h", self.manifest["build_files"])
 
+    def test_the_caption_ids_are_learned_not_guessed(self):
+        # The SPIRAL caption is one of Pioneer's own images, and which id it
+        # is belongs to the player: static extraction found no table offline.
+        # The module asks the core to name the range instead, and the answer
+        # arrives as one log line per id.
+        self.assertIn("framework->images->watch_ids", self.feature)
+        self.assertIn("#define SW_CAPTION_FIRST 0x1439u", self.feature)
+        self.assertIn("#define SW_TILE_FIRST", self.feature)
+        self.assertIn("0x1590u", self.feature)
+        # One watch per range: the same owner twice would replace the first.
+        self.assertIn("&sw_caption_watch", self.feature)
+        self.assertIn("&sw_tile_watch", self.feature)
+
+    def test_the_halfbeat_path_says_what_it_did(self):
+        # "no ticks on screen" has two very different causes -- the data path
+        # never ran, or it ran and wanted no ticks -- and the deck only gets
+        # one boot per question.
+        self.assertIn("swang_halfbeat_report(callbacks)", self.feature)
+        for line in ("swang: halfbeat callbacks = ",
+                     "swang: ticks on = ",
+                     "swang: beat marks found = ",
+                     "swang: columns ticked = ",
+                     "swang: wave pointer = "):
+            self.assertIn(line, self.feature)
+
     def test_build_inputs_are_declared(self):
         self.assertEqual(
             self.manifest["build_files"],

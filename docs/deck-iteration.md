@@ -235,6 +235,17 @@ absence so it cannot creep back.
   `masked image height = `). It turns the next iteration from a guess into
   arithmetic.
 - Prefer a log line over a new hook when the question is "did this path run".
+- **When the number you need is the player's, ask the player.** Which stock
+  image id carries a caption is decided by rbp at runtime; no static table run
+  exists in `rbp` for it (see the caption history below). `rx3_images.watch_ids(owner,
+  first, last)` registers a range and logs the first draw of every id in it --
+  one line each, bounded by the range -- so one boot names the set. That is
+  cheaper and more certain than any amount of extraction, and it is how the
+  SPIRAL caption, the effect tiles and the pad faces get named.
+- **A module cannot read a stock record while it starts**: the player builds
+  its image table after module init. Anything that needs a record's width,
+  height or ground is painted core-side, in `replace_masked`, while the table
+  is copied.
 
 ## Tests, manifests and the toolchain
 

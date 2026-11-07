@@ -70,6 +70,14 @@ struct rx3_image_service {
     int (*replace_masked)(const void *owner, unsigned int image,
                           unsigned int mask_width, unsigned int mask_height,
                           const uint8_t *coverage);
+    /* Learn which of a range of stock ids the player draws.
+       A module cannot paint a caption it cannot name, and the ids a screen
+       uses are decided by the player, not by this tree. Watching a range
+       logs the first draw of every id in it -- one line each, bounded by
+       the range -- so one boot answers what static extraction could not.
+       The range must span fewer than 128 ids. Registering again for the same
+       owner replaces the range and forgets what it had seen. */
+    int (*watch_ids)(const void *owner, unsigned int first, unsigned int last);
 };
 extern const struct rx3_image_service rx3_images;
 #endif

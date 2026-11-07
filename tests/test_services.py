@@ -332,6 +332,38 @@ int main(void) {
 }
 ''', ['core/services/rx3_images.c'], ['-D_DEFAULT_SOURCE', '-D_DARWIN_C_SOURCE', '-Wno-unused-function'])
 
+    def test_a_watched_range_names_each_drawn_id_once(self):
+        self.run_units(HOOKS + r'''
+#include "core/services/rx3_images.h"
+static void *original_for(unsigned long a) { (void)a; return (void *)1; }
+static const char watch = 0;
+static unsigned lines, last;
+/* Replaces the weak stub, so every reported id is counted here. */
+void rx3_log_number(const char *label, unsigned long value) {
+    (void)label; lines++; last = value;
+}
+int main(void) {
+    /* A range wider than the record is refused rather than truncated. */
+    assert(!rx3_images.watch_ids(&watch, 0x100, 0x180));
+    assert(!rx3_images.watch_ids(0, 0x100, 0x110));
+    assert(!rx3_images.watch_ids(&watch, 0x110, 0x100));
+    assert(rx3_images.watch_ids(&watch, 0x1439, 0x1440));
+    /* Only ids inside the range, and only the first draw of each. */
+    rx3_image_drawn(0x1438); assert(lines == 0);
+    rx3_image_drawn(0x1439); assert(lines == 1 && last == 0x1439);
+    rx3_image_drawn(0x1439); assert(lines == 1);
+    rx3_image_drawn(0x1440); assert(lines == 2 && last == 0x1440);
+    rx3_image_drawn(0x1441); assert(lines == 2);
+    /* Releasing the owner drops the watch; registering again re-arms it and
+       forgets what it had already reported. */
+    rx3_images.unregister_owner(&watch);
+    rx3_image_drawn(0x143a); assert(lines == 2);
+    assert(rx3_images.watch_ids(&watch, 0x1439, 0x1440));
+    rx3_image_drawn(0x1439); assert(lines == 3);
+    return 0;
+}
+''', ['core/services/rx3_images.c'], ['-D_DEFAULT_SOURCE', '-D_DARWIN_C_SOURCE', '-Wno-unused-function'])
+
 
 if __name__ == '__main__':
     unittest.main()

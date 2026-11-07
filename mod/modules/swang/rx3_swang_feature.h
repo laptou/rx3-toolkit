@@ -32,6 +32,10 @@
 #define BEAT_FX_UI_SPIRAL 3
 #define BEAT_FX_DISPLAY_SPIRAL 5
 static const unsigned char sw_owner;
+/* One watch per range: registering the same owner twice would replace the
+   first range instead of adding a second. */
+static const unsigned char sw_caption_watch;
+static const unsigned char sw_tile_watch;
 #define PLAY_ENGINE_INSTANCE ((const uint8_t *const volatile *)0x011497d0)
 /* BpmManager::getInstance()'s static, +0x1c the beat fx bpm x100. */
 #define BFX_BPM_X100 (*(const volatile int *)(0x01149378u + 0x1cu))
@@ -123,6 +127,17 @@ static unsigned sw_frame_wiped;   /* counted, not reported per frame */
 /* the columns already shown, so the tail can put them back. bounded, and the
    oldest is dropped: a column that scrolls out has nothing left to repaint. */
 #define SW_TICK_MAX 128u
+
+/* Pioneer's beat fx captions are images, four variants per effect, and the
+   ids belong to the player, not to this tree. The sidechain already paints
+   the HELIX set at 0x1449; the SPIRAL set is somewhere in the same run,
+   which is 160x40 captions followed by the 132x38 effect tiles. Both ranges
+   are wide enough to hold whichever set the played firmware uses, and narrow
+   enough that the watched log stays bounded. */
+#define SW_CAPTION_FIRST 0x1439u
+#define SW_CAPTION_LAST  0x1470u
+#define SW_TILE_FIRST    0x1590u
+#define SW_TILE_LAST     0x15bfu
 #define SW_MIRROR_ROW 221u
 #define SW_NEEDLE_ROW 100u
 static struct sw_tick {
@@ -131,6 +146,8 @@ static struct sw_tick {
 } sw_ticks[SW_TICK_MAX];
 static unsigned sw_tick_count;
 static unsigned sw_tick_head;
+static unsigned sw_beats_found;
+static unsigned sw_ticked_columns;
 
 static int sw_master_deck(void)
 {
@@ -284,6 +301,7 @@ static void swang_paint_tick(int deck, int x)
     for (row = SW_TICK_TOP; row < SW_TICK_BOTTOM; row++)
         *(uint16_t *)(base + (unsigned)deck * SW_WAVE_DECK +
                       row * SW_WAVE_STRIDE + (unsigned)x * 2u) = SW_TICK_COLOUR;
+    sw_ticked_columns++;
     sw_probe_deck = (unsigned)deck;
     sw_probe_x = (unsigned)x;
     sw_ticks[sw_tick_head].deck = (unsigned)deck;
@@ -401,6 +419,7 @@ swang_note_beat_tick(int deck, unsigned pixel, uint16_t *mark)
     beat = *mark;
     if (beat < 1u || beat > 5u || !swang_beat_painted(deck, pixel))
         return;
+    sw_beats_found++;
     this_mod = (int)(beat == 5u ? 1u : beat) - 1;
     if (!sw_scan_have) {
         sw_scan_have = 1;
@@ -431,12 +450,32 @@ swang_note_beat_tick(int deck, unsigned pixel, uint16_t *mark)
    translation unit is softfp, so the wrapper takes only the integer args
    and calls the original before any of our own float work. */
 static unsigned sw_halfbeat_callbacks;
+static unsigned sw_halfbeat_seen;
+
+/* One boot has to say whether the data path runs at all, and if it does,
+   why nothing reaches the gutter. Three lines, at fixed counts, from the ui
+   thread that already owns this hook. */
+static void swang_halfbeat_report(unsigned callbacks)
+{
+    framework->log_number("swang: halfbeat callbacks = ", callbacks);
+    framework->log_number("swang: ticks on = ",
+                          (unsigned long)(sw_ticks_on != 0));
+    framework->log_number("swang: beat marks found = ", sw_beats_found);
+    framework->log_number("swang: columns ticked = ", sw_ticked_columns);
+    framework->log_number("swang: ticks remembered = ", sw_tick_count);
+    framework->log_number("swang: wave pointer = ",
+                          (unsigned long)(unsigned int)(unsigned long)SW_WAVE_PTR);
+}
 
 static void swang_halfbeat(int deck, unsigned pixel, unsigned from,
                            unsigned to, uint16_t *mark)
 {
+    unsigned callbacks;
     __atomic_add_fetch(&sw_halfbeat_callbacks, 1u, __ATOMIC_SEQ_CST);
     original_sw_halfbeat(deck, pixel, from, to, mark);
+    callbacks = __atomic_add_fetch(&sw_halfbeat_seen, 1u, __ATOMIC_SEQ_CST);
+    if (callbacks == 60u || callbacks == 600u || callbacks == 6000u)
+        swang_halfbeat_report(callbacks);
     (void)from;
     (void)to;
     swang_note_beat_tick(deck, pixel, mark);
@@ -525,6 +564,14 @@ static int swang_feature_install(void)
         !framework->beatfx->claim_time(&sw_owner, 10u, sw_time)) {
         framework->log_line("swang refused: the control claims failed");
         return 0;
+    }
+    /* Ask the player which caption images it draws while this runs, so one
+       boot names the SPIRAL set instead of another guess. */
+    if (framework->images && framework->images->watch_ids) {
+        framework->images->watch_ids(&sw_caption_watch, SW_CAPTION_FIRST,
+                                     SW_CAPTION_LAST);
+        framework->images->watch_ids(&sw_tile_watch, SW_TILE_FIRST,
+                                     SW_TILE_LAST);
     }
     if (!framework->beatfx->claim_info(&sw_owner, sw_info))
         framework->log_line("swang: the play screen block stays stock");
