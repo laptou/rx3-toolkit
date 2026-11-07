@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 #include "rx3_images.h"
 #include "rx3_hooks.h"
+#include "rx3_label_paint.h"
 #include "rx3_log.h"
 /* Three suggestion colours need five native states and one badge each. */
 #define IMAGE_LIMIT 24u
@@ -109,11 +110,15 @@ void *rx3_image_resolve(unsigned int id,void *(*lookup)(unsigned int),const void
 
 /* Native record replacements. The pixels belong to the contributor and stay
    referenced by every table built after registration. */
-#define REPLACEMENT_LIMIT 8u
+#define REPLACEMENT_LIMIT 12u
 struct replacement {
     const void *owner;
     unsigned int image, width, height;
     const uint16_t *dark, *light;
+    /* set for a masked replacement: the core paints it while the tables are
+       built, when the stock record is in hand. */
+    const uint8_t *coverage;
+    unsigned int mask_width, mask_height;
 };
 static struct replacement replacements[REPLACEMENT_LIMIT];
 static uint8_t *dark_table, *light_table;
@@ -156,11 +161,68 @@ static int replace_native(const void *owner, unsigned int image, const uint16_t 
     return 0;
 }
 
+/* Replace a stock record with a mask painted in that record's own colours.
+   Nothing is allocated here: the size, the ground and the ink all come from
+   the record, which is only readable while the tables are being built. */
+static int replace_masked(const void *owner, unsigned int image,
+                          unsigned int mask_width, unsigned int mask_height,
+                          const uint8_t *coverage)
+{
+    if (!owner || !coverage || !mask_width || !mask_height ||
+        image >= RX3_STOCK_IMAGE_COUNT || replaced(image) ||
+        __atomic_load_n(&tables_published, __ATOMIC_SEQ_CST)) return 0;
+    for (unsigned int i = 0; i < REPLACEMENT_LIMIT; i++) {
+        struct replacement *r = &replacements[i];
+        if (r->owner) continue;
+        memset(r, 0, sizeof(*r));
+        r->owner = owner;
+        r->image = image;
+        r->coverage = coverage;
+        r->mask_width = mask_width;
+        r->mask_height = mask_height;
+        return 1;
+    }
+    return 0;
+}
+
 static int release_native(const void *owner)
 {
     if (__atomic_load_n(&tables_published, __ATOMIC_SEQ_CST)) return 0;
     for (unsigned int i = 0; i < REPLACEMENT_LIMIT; i++)
         if (replacements[i].owner == owner) memset(&replacements[i], 0, sizeof(replacements[i]));
+    return 1;
+}
+
+/* Paint a masked replacement from the stock record it stands in for: the
+   record gives the size, its first pixel the ground, and the pixel furthest
+   from that ground the ink. Only plain rgb565 records can be painted; a
+   paletted one keeps its stock artwork. */
+static int paint_masked(struct replacement *r, uint8_t *table, uint8_t *record)
+{
+    uint16_t width, height;
+    uint32_t offset;
+    memcpy(&width, record + 4u, 2u);
+    memcpy(&height, record + 6u, 2u);
+    memcpy(&offset, record + 0x20u, 4u);
+    if (!width || !height || record[0x18u] != 1u || record[0x19u]) return 0;
+    size_t bytes = (size_t)width * (size_t)height * 2u;
+    uint16_t *pixels = mmap(0, bytes, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (pixels == MAP_FAILED) return 0;
+    const uint16_t *stock = (const void *)(table + offset);
+    const struct rx3_label_mask mask = {
+        r->mask_width, r->mask_height, r->coverage
+    };
+    unsigned count = (unsigned)width * (unsigned)height;
+    rx3_label_paint(pixels, width, height, stock[0],
+                    rx3_label_ink(stock, count, stock[0]), &mask);
+    r->dark = pixels;
+    r->light = pixels;
+    r->width = width;
+    r->height = height;
+    rx3_log_number("masked image painted = ", r->image);
+    rx3_log_number("masked image width = ", width);
+    rx3_log_number("masked image height = ", height);
     return 1;
 }
 
@@ -170,13 +232,19 @@ static int release_native(const void *owner)
 void rx3_image_install_replacements(uint8_t *table, int light)
 {
     for (unsigned int i = 0; i < REPLACEMENT_LIMIT; i++) {
-        const struct replacement *r = &replacements[i];
+        struct replacement *r = &replacements[i];
         if (!r->owner) continue;
         uint8_t *record = table + r->image * 44u;
         if (light) {
+            /* A masked record's pixels are the dark table's, and the light
+               table's offsets were rebased from it already. */
             if (!r->light) continue;
             uint32_t offset = (uint32_t)(unsigned long)r->light - (uint32_t)(unsigned long)table;
             memcpy(record + 0x20u, &offset, 4u);
+            continue;
+        }
+        if (r->coverage && !paint_masked(r, table, record)) {
+            rx3_log_number("masked image refused = ", r->image);
             continue;
         }
         uint16_t width = (uint16_t)r->width, height = (uint16_t)r->height;
@@ -295,34 +363,6 @@ static int native_image(unsigned int image, struct rx3_native_image *out)
     return 1;
 }
 
-/* A stock record as the player ships it, measured through the table the
-   global still points at: modules call this while starting, before the
-   performance tables are built, to learn a record's real size and colours
-   instead of a size someone guessed. Returns 0 until the player's table is
-   up, for a record with no bitmap of its own, or once the tables publish. */
-static int stock_image(unsigned int image, struct rx3_native_image *out)
-{
-    uint8_t *table = stock_table ? (uint8_t *)stock_table
-                                : *(uint8_t **)RX3_IMAGE_TABLE_POINTER;
-    if (!out || !table || image >= RX3_STOCK_IMAGE_COUNT) return 0;
-    const uint8_t *record = table + image * 44u;
-    uint16_t width, height;
-    uint32_t offset;
-    memcpy(&width, record + 4u, 2u);
-    memcpy(&height, record + 6u, 2u);
-    memcpy(&offset, record + 0x20u, 4u);
-    if (!width || !height) return 0;
-    const uint16_t *pixels = (const void *)(table + offset);
-    uint32_t from_stock = (uint32_t)(unsigned long)pixels - (uint32_t)(unsigned long)table;
-    if (from_stock <= RX3_STOCK_IMAGE_COUNT * 44u + 43u) return 0;
-    out->width = width;
-    out->height = height;
-    out->format = record[0x18u];
-    out->paletted = record[0x19u];
-    out->pixels = pixels;
-    return 1;
-}
-
 static int publish_variant(unsigned int image, const uint16_t *pixels)
 {
     if (!light_table || !pixels || image >= RX3_STOCK_IMAGE_COUNT || replaced(image)) return 0;
@@ -344,5 +384,5 @@ const struct rx3_image_service rx3_images={
     register_recolour, unregister_owner, rx3_image_register_bitmap,
     replace_native, release_native, claim_variants, release_variants,
     variants_ready, native_image, publish_variant, select_variant, light_active,
-    stock_image
+    replace_masked
 };

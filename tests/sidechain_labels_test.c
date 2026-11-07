@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "mod/modules/sidechain/rx3_label_paint.h"
+#include "mod/modules/core/services/rx3_label_paint.h"
 
 #define GROUND 0x0000u
 #define INK 0xffffu

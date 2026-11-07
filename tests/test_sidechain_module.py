@@ -11,6 +11,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MODULES = ROOT / "mod/modules"
+CORE = MODULES / "core"
 
 
 class SidechainModuleTests(unittest.TestCase):
@@ -86,41 +87,55 @@ class SidechainModuleTests(unittest.TestCase):
 
     def test_the_caption_is_measured_not_guessed(self):
         labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()
-        self.assertIn("stock_image", labels)
-        self.assertIn("replace_native", labels)
+        # the paint happens core-side, on the stock record as it is copied:
+        # a module cannot read a record while it starts, because the player
+        # has not built its table yet. that is the whole reason for it.
+        self.assertIn("replace_masked", labels)
+        self.assertNotIn("replace_native", labels)
+        self.assertNotIn("stock_image", labels)
         self.assertIn("SC_CAPTION_FIRST_ID 0x1449u", labels)
         self.assertIn("SC_CAPTION_COUNT 4u", labels)
-        # the mask's own rasterisation is the one size that is fixed.
+        # the mask's own rasterisation is the one size that is fixed; the
+        # record's width and height decide the size that is drawn.
         self.assertIn("sc_label_caption_coverage[1856]", labels)
+        self.assertIn("#define SC_LABEL_WIDTH 116u", labels)
+        self.assertIn("#define SC_LABEL_HEIGHT 16u", labels)
         for guessed in ("160u", "40u", "0xf81f", "0xf81fu"):
             self.assertNotIn(guessed, labels)
         self.assertIn("sc_labels_install();", self.feature)
         self.assertIn("sc_labels_release();", self.feature)
 
-    def test_the_caption_waits_for_the_record_it_paints_over(self):
-        labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()
-        self.assertIn("stock.format != 1u", labels)
-        self.assertIn("stock.paletted", labels)
-        # freeing after publication would leave the live table pointing at
-        # released memory, so the service's refusal has to be honoured.
-        self.assertIn("if (!framework->images->release_native(&sc_owner))",
-                      labels)
+    def test_the_paint_refuses_what_it_cannot_read(self):
+        images = (CORE / "services/rx3_images.c").read_text()
+        # a paletted record, a record with no bitmap, and a spent replacement
+        # are all refused rather than painted over with nonsense.
+        self.assertIn("record[0x18u] != 1u", images)
+        self.assertIn("record[0x19u]", images)
+        self.assertIn("replaced(image)", images)
+        self.assertIn("masked image refused = ", images)
+        self.assertIn("masked image painted = ", images)
+        self.assertIn("masked image width = ", images)
+        self.assertIn("masked image height = ", images)
 
-    def test_the_tile_geometry_is_logged_before_it_is_used(self):
+    def test_the_registration_is_taken_out_and_the_pixels_left_alone(self):
+        labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()
+        # once the tables publish the pixels are the table's: the release
+        # only takes the registration out, it never frees them.
+        self.assertIn("framework->images->release_native(&sc_owner)", labels)
+        self.assertNotIn("munmap", labels)
+
+    def test_the_tiles_take_the_same_mask(self):
         labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()
         self.assertIn("SC_TILE_FIRST_ID 0x15aau", labels)
         self.assertIn("SC_TILE_COUNT 3u", labels)
-        self.assertIn("sidechain: select tile width = ", labels)
-        self.assertIn("sidechain: select tile height = ", labels)
-        self.assertIn("sidechain: beat number width = ", labels)
-        self.assertIn("written to the module log",
-                      (MODULES / "sidechain/README.md").read_text())
+        self.assertEqual(labels.count("replace_masked("), 2)
+        self.assertIn("sidechain: labels relabelled = ", labels)
 
     def test_build_inputs_are_declared(self):
         self.assertEqual(
             self.manifest["build_files"],
             ["rx3_sidechain_dsp.h", "rx3_sidechain_meter.h",
-             "rx3_label_paint.h", "rx3_sidechain_labels.h",
+             "rx3_sidechain_labels.h",
              "rx3_sidechain_feature.h", "rx3_sidechain_module.c"])
         self.assertEqual(self.manifest["category"], "beatjump")
 

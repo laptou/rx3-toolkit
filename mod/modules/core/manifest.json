@@ -6,7 +6,7 @@
   },
   "description": {
     "en": "Provides shared audio, display and control services. Included automatically when another module needs it.",
-    "fr": "Fournit les services communs d’audio, d’affichage et de commandes. Inclus automatiquement lorsqu’un autre module en dépend."
+    "fr": "Fournit les services communs d\u2019audio, d\u2019affichage et de commandes. Inclus automatiquement lorsqu\u2019un autre module en d\u00e9pend."
   },
   "firmwares": [
     "1.19",
@@ -79,6 +79,7 @@
     "api/rx3_image_api.h",
     "api/rx3_harmony.h",
     "services/rx3_images.h",
+    "services/rx3_label_paint.h",
     "services/rx3_images.c",
     "api/rx3_browse_api.h",
     "services/rx3_browse.h",

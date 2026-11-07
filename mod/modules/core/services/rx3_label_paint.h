@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0
- * painting a coverage mask into an rgb565 image.
+ * painting a coverage mask into an rgb565 image. core-owned: the paint runs
+ * while the image tables are built, on the stock record as it is copied.
  *
  * the mask holds 0..15 per pixel: 0 leaves the ground, 15 takes the ink. it
  * is box-averaged down when it is larger than the target and centred, so one
