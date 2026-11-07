@@ -95,6 +95,31 @@ static int sw_scan_have;
 static float sw_scan_beat;
 static unsigned sw_scan_px;
 
+/* ui_PLAYMODE_Set ends the frame with `vpop {d8,d9}` then
+   `ldmia sp!,{r4-r11,pc}`, and that single exit runs after the row mirror,
+   the cue merge and the playhead needle have all written the strip. Painting
+   there is what keeps a tick on screen: a tick painted at the beat setup is
+   otherwise rewritten by whatever paints that column afterwards. */
+#define SW_FRAME_TAIL ((unsigned long)0x0024fcd8)
+static const uint8_t sw_frame_guard[8] = {
+    0x04, 0x8b, 0xbd, 0xec, 0xe8, 0xbd, 0x8f, 0xf0
+};
+static struct installed_hook sw_frame_hook;
+static int sw_frame_installed;
+static unsigned sw_frame_callbacks;
+
+/* the columns already shown, so the tail can put them back. bounded, and the
+   oldest is dropped: a column that scrolls out has nothing left to repaint. */
+#define SW_TICK_MAX 128u
+#define SW_MIRROR_ROW 221u
+#define SW_NEEDLE_ROW 100u
+static struct sw_tick {
+    unsigned deck;
+    unsigned x;
+} sw_ticks[SW_TICK_MAX];
+static unsigned sw_tick_count;
+static unsigned sw_tick_head;
+
 static int sw_master_deck(void)
 {
     const uint8_t *engine = *PLAY_ENGINE_INSTANCE;
@@ -247,6 +272,60 @@ static void swang_paint_tick(int deck, int x)
     for (row = SW_TICK_TOP; row < SW_TICK_BOTTOM; row++)
         *(uint16_t *)(base + (unsigned)deck * SW_WAVE_DECK +
                       row * SW_WAVE_STRIDE + (unsigned)x * 2u) = SW_TICK_COLOUR;
+    sw_ticks[sw_tick_head].deck = (unsigned)deck;
+    sw_ticks[sw_tick_head].x = (unsigned)x;
+    sw_tick_head = sw_tick_head + 1u < SW_TICK_MAX ? sw_tick_head + 1u : 0u;
+    if (sw_tick_count < SW_TICK_MAX)
+        sw_tick_count++;
+}
+
+/* rbp mirrors rows 0..110 into 111..221 (row `221 - r`), then the cue merge
+   writes 0..19 and 201..220 and the playhead needle two columns. The tail
+   runs after all of it, so both bands are painted and a needle column is
+   left alone: it carries the colour 0xffff or the same red as a downbeat at
+   every row, which is what the sample above the gutter looks for. */
+static int swang_tick_rows(uint8_t *base, unsigned deck, unsigned x)
+{
+    uint16_t head = *(const uint16_t *)(base + deck * SW_WAVE_DECK +
+                                        SW_NEEDLE_ROW * SW_WAVE_STRIDE + x * 2u);
+    unsigned row;
+    if (head == 0xffffu || head == SW_BEAT_RED)
+        return 0;
+    for (row = SW_TICK_TOP; row < SW_TICK_BOTTOM; row++) {
+        *(uint16_t *)(base + deck * SW_WAVE_DECK +
+                      row * SW_WAVE_STRIDE + x * 2u) = SW_TICK_COLOUR;
+        *(uint16_t *)(base + deck * SW_WAVE_DECK +
+                      (SW_MIRROR_ROW - row) * SW_WAVE_STRIDE + x * 2u) =
+            SW_TICK_COLOUR;
+    }
+    return 1;
+}
+
+static void swang_repaint_rows(void)
+{
+    uint8_t *base = SW_WAVE_PTR;
+    unsigned index;
+    if (!base)
+        return;
+    if (!sw_ticks_on) {
+        sw_tick_count = 0;
+        sw_tick_head = 0;
+        return;
+    }
+    for (index = 0; index < sw_tick_count; index++) {
+        const struct sw_tick *tick = &sw_ticks[index];
+        if (tick->x >= SW_WAVE_WIDTH || tick->deck > 1u)
+            continue;
+        swang_tick_rows(base, tick->deck, tick->x);
+    }
+}
+
+/* the return detour: once the frame is popped, before the caller resumes. */
+static void swang_frame_painted(void)
+{
+    __atomic_add_fetch(&sw_frame_callbacks, 1u, __ATOMIC_SEQ_CST);
+    swang_repaint_rows();
+    __atomic_sub_fetch(&sw_frame_callbacks, 1u, __ATOMIC_SEQ_CST);
 }
 
 /* called after rbp's own tick for this column. a gap is drawn once its
@@ -415,6 +494,17 @@ static int swang_feature_install(void)
         (void *)swang_halfbeat);
     if (!original_sw_halfbeat)
         framework->log_line("swang: waveform ticks stay stock");
+    /* The ticks are painted at the beat setup and again on the frame's own
+       return, because rbp rewrites the gutter of every column it crosses
+       after that setup. Without the tail the marks blink; with it they hold
+       until they scroll out. */
+    sw_frame_installed = framework->install_return_hook &&
+        framework->install_return_hook(&sw_frame_hook, SW_FRAME_TAIL,
+                                       sw_frame_guard,
+                                       (void *)swang_frame_painted) != 0;
+    framework->log_line(sw_frame_installed
+                            ? "swang: ticks repaint after the waveform draw"
+                            : "swang: ticks stay at the beat setup");
     return 1;
 }
 
@@ -423,6 +513,13 @@ static void swang_feature_remove(void)
     int detached;
     framework->beatfx->unregister_owner(&sw_owner);
     framework->audio->release_deck_stream(&sw_owner);
+    if (sw_frame_installed) {
+        framework->detach_hook(&sw_frame_hook);
+        while (__atomic_load_n(&sw_frame_callbacks, __ATOMIC_SEQ_CST))
+            usleep(1000u);
+        framework->release_hook(&sw_frame_hook);
+        sw_frame_installed = 0;
+    }
     if (original_sw_halfbeat) {
         detached = framework->detach_hook(&sw_halfbeat_hook);
         while (__atomic_load_n(&sw_halfbeat_callbacks, __ATOMIC_SEQ_CST))
@@ -433,6 +530,8 @@ static void swang_feature_remove(void)
             framework->log_line("swang: halfbeat hook stays after a failed restore");
     }
     sw_ticks_on = 0;
+    sw_tick_count = 0;
+    sw_tick_head = 0;
 }
 
 #endif /* RX3_SWANG_FEATURE_H */
