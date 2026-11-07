@@ -19,7 +19,10 @@
 #define SC_METER_COLUMNS (SC_METER_WIDTH / SC_METER_COLUMN)
 #define SC_METER_TICK_MS 33u
 /* the meter closes once helix has been off for this long. */
-#define SC_METER_IDLE_MS 500u
+/* how long the meter holds after the last block arrives. short enough that
+   deselecting helix feels immediate, long enough to ride out a pause in the
+   audio path. */
+#define SC_METER_IDLE_MS 150u
 #define SC_METER_FLOOR_DB 48.0f
 #define SC_METER_CUT_DB 24.0f
 

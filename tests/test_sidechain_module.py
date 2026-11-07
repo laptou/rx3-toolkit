@@ -105,17 +105,31 @@ class SidechainModuleTests(unittest.TestCase):
         self.assertIn("sc_labels_install();", self.feature)
         self.assertIn("sc_labels_release();", self.feature)
 
-    def test_the_paint_refuses_what_it_cannot_read(self):
+    def test_the_paint_reads_the_record_it_stands_in_for(self):
         images = (CORE / "services/rx3_images.c").read_text()
-        # a paletted record, a record with no bitmap, and a spent replacement
-        # are all refused rather than painted over with nonsense.
-        self.assertIn("record[0x18u] != 1u", images)
-        self.assertIn("record[0x19u]", images)
-        self.assertIn("replaced(image)", images)
+        # the first code ever to read a stock record in place: log every field
+        # so one boot answers what the format and palette bytes really are.
+        for field in ("masked image record = ", "masked image width = ",
+                      "masked image height = ", "masked image format = ",
+                      "masked image palette = "):
+            self.assertIn(field, images)
+        # a record with no bitmap, or an index image whose palette would have
+        # to be translated, is refused instead of painted over with nonsense.
+        self.assertIn("if (!width || !height) return 0;", images)
+        self.assertIn("if (paletted) return 0;", images)
         self.assertIn("masked image refused = ", images)
         self.assertIn("masked image painted = ", images)
-        self.assertIn("masked image width = ", images)
-        self.assertIn("masked image height = ", images)
+
+    def test_the_paint_keeps_the_records_own_ground(self):
+        images = (CORE / "services/rx3_images.c").read_text()
+        # the mask covers only the lettering: every other pixel keeps the
+        # ground the player drew, so a blue plate stays blue.
+        self.assertIn("pixels[i] = ground;", images)
+        self.assertIn("rx3_label_paint(pixels, width, height, ground, ink, &mask)",
+                      images)
+        # a mask fills every pixel, so the record is plain rgb565; a keyed
+        # replacement keeps the colour-key format.
+        self.assertIn("record[0x18u] = r->coverage ? 1u : 2u;", images)
 
     def test_the_registration_is_taken_out_and_the_pixels_left_alone(self):
         labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()

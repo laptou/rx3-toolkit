@@ -201,10 +201,23 @@ static int paint_masked(struct replacement *r, uint8_t *table, uint8_t *record)
 {
     uint16_t width, height;
     uint32_t offset;
+    unsigned format, paletted;
     memcpy(&width, record + 4u, 2u);
     memcpy(&height, record + 6u, 2u);
     memcpy(&offset, record + 0x20u, 4u);
-    if (!width || !height || record[0x18u] != 1u || record[0x19u]) return 0;
+    format = record[0x18u];
+    paletted = record[0x19u];
+    /* What the stock record actually holds, since nothing has measured one
+       before: an in-place paint is the first code to read these fields. */
+    rx3_log_number("masked image record = ", r->image);
+    rx3_log_number("masked image width = ", width);
+    rx3_log_number("masked image height = ", height);
+    rx3_log_number("masked image format = ", format);
+    rx3_log_number("masked image palette = ", paletted);
+    if (!width || !height) return 0;
+    /* An index image would need its palette translated to be repainted, and
+       the palette's entry count is not recorded here. Keep its artwork. */
+    if (paletted) return 0;
     size_t bytes = (size_t)width * (size_t)height * 2u;
     uint16_t *pixels = mmap(0, bytes, PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -214,15 +227,18 @@ static int paint_masked(struct replacement *r, uint8_t *table, uint8_t *record)
         r->mask_width, r->mask_height, r->coverage
     };
     unsigned count = (unsigned)width * (unsigned)height;
-    rx3_label_paint(pixels, width, height, stock[0],
-                    rx3_label_ink(stock, count, stock[0]), &mask);
+    uint16_t ground = stock[0];
+    uint16_t ink = rx3_label_ink(stock, count, ground);
+    /* every pixel not covered by the mask keeps the record's own ground, so
+       the plate behind the lettering stays the plate rbp drew. */
+    for (unsigned i = 0; i < count; i++)
+        pixels[i] = ground;
+    rx3_label_paint(pixels, width, height, ground, ink, &mask);
     r->dark = pixels;
     r->light = pixels;
     r->width = width;
     r->height = height;
     rx3_log_number("masked image painted = ", r->image);
-    rx3_log_number("masked image width = ", width);
-    rx3_log_number("masked image height = ", height);
     return 1;
 }
 
@@ -252,7 +268,10 @@ void rx3_image_install_replacements(uint8_t *table, int light)
         uint32_t no_palette = 0u;
         memcpy(record + 4u, &width, 2u);
         memcpy(record + 6u, &height, 2u);
-        record[0x18u] = 2u;
+        /* A mask fills every pixel, so the image is plain rgb565: the same
+           format the deck's own opaque records use. A keyed replacement
+           keeps 2, its key colour being the one it leaves unpainted. */
+        record[0x18u] = r->coverage ? 1u : 2u;
         record[0x19u] = 0u;
         memcpy(record + 0x20u, &pixels, 4u);
         memcpy(record + 0x24u, &no_palette, 4u);

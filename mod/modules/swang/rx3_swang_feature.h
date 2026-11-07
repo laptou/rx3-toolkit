@@ -108,6 +108,18 @@ static struct installed_hook sw_frame_hook;
 static int sw_frame_installed;
 static unsigned sw_frame_callbacks;
 
+/* One column is watched across frames: the tick painted into it is read back
+   at the tail of the next frame, before it is repainted. If it is still the
+   tick colour, nothing between the two frames painted over it and the marks
+   are not being wiped -- the flicker would then be the frame being copied out
+   before this hook runs. If it is gone, something paints the gutter after
+   this hook and the hook site is wrong. Neither answer is reachable from the
+   desk, so the deck reports it. */
+static unsigned sw_probe_deck;
+static unsigned sw_probe_x = SW_WAVE_WIDTH;
+static unsigned sw_frame_held;
+static unsigned sw_frame_wiped;   /* counted, not reported per frame */
+
 /* the columns already shown, so the tail can put them back. bounded, and the
    oldest is dropped: a column that scrolls out has nothing left to repaint. */
 #define SW_TICK_MAX 128u
@@ -272,6 +284,8 @@ static void swang_paint_tick(int deck, int x)
     for (row = SW_TICK_TOP; row < SW_TICK_BOTTOM; row++)
         *(uint16_t *)(base + (unsigned)deck * SW_WAVE_DECK +
                       row * SW_WAVE_STRIDE + (unsigned)x * 2u) = SW_TICK_COLOUR;
+    sw_probe_deck = (unsigned)deck;
+    sw_probe_x = (unsigned)x;
     sw_ticks[sw_tick_head].deck = (unsigned)deck;
     sw_ticks[sw_tick_head].x = (unsigned)x;
     sw_tick_head = sw_tick_head + 1u < SW_TICK_MAX ? sw_tick_head + 1u : 0u;
@@ -320,11 +334,40 @@ static void swang_repaint_rows(void)
     }
 }
 
+/* is the column painted last frame still ticked? */
+static void swang_probe_read(uint8_t *base)
+{
+    uint16_t at;
+    uint16_t head;
+    if (!base || sw_probe_x >= SW_WAVE_WIDTH)
+        return;
+    at = *(const uint16_t *)(base + sw_probe_deck * SW_WAVE_DECK +
+                             SW_TICK_TOP * SW_WAVE_STRIDE + sw_probe_x * 2u);
+    if (at == SW_TICK_COLOUR) {
+        sw_frame_held++;
+        return;
+    }
+    head = *(const uint16_t *)(base + sw_probe_deck * SW_WAVE_DECK +
+                               SW_NEEDLE_ROW * SW_WAVE_STRIDE +
+                               sw_probe_x * 2u);
+    if (head != 0xffffu && head != SW_BEAT_RED)
+        sw_frame_wiped++;
+}
+
 /* the return detour: once the frame is popped, before the caller resumes. */
 static void swang_frame_painted(void)
 {
-    __atomic_add_fetch(&sw_frame_callbacks, 1u, __ATOMIC_SEQ_CST);
+    uint8_t *base = SW_WAVE_PTR;
+    unsigned callbacks = __atomic_add_fetch(&sw_frame_callbacks, 1u,
+                                            __ATOMIC_SEQ_CST);
+    swang_probe_read(base);
     swang_repaint_rows();
+    if (callbacks == 30u || callbacks == 90u || callbacks == 300u) {
+        framework->log_number("swang: frame callbacks = ", callbacks);
+        framework->log_number("swang: ticks remembered = ", sw_tick_count);
+        framework->log_number("swang: last tick still there = ", sw_frame_held);
+        framework->log_number("swang: last tick wiped = ", sw_frame_wiped);
+    }
     __atomic_sub_fetch(&sw_frame_callbacks, 1u, __ATOMIC_SEQ_CST);
 }
 
