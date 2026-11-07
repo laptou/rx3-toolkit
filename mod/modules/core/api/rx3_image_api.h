@@ -78,6 +78,20 @@ struct rx3_image_service {
        The range must span fewer than 128 ids. Registering again for the same
        owner replaces the range and forgets what it had seen. */
     int (*watch_ids)(const void *owner, unsigned int first, unsigned int last);
+    /* Learn which ids a screen draws, as they are drawn: the same problem as
+       watch_ids, answered with a callback instead of a log line, because a
+       relabel has to act on the id it has just been told. Called on the
+       render thread; keep it short. Release with unregister_owner. */
+    int (*claim_drawn)(const void *owner, void (*fn)(unsigned int image));
+    /* Paint a coverage mask into a stock record after the tables published.
+       Reach for this only when the id cannot be known before the draw:
+       replace_masked is the ordinary path, because a paint at table-build
+       time cannot land in the wrong table. The record's own width, height,
+       ground and ink decide the result, and both tables are pointed at the
+       painted pixels, so a theme change keeps the label. */
+    int (*paint_masked_now)(const void *owner, unsigned int image,
+                            unsigned int mask_width, unsigned int mask_height,
+                            const uint8_t *coverage);
 };
 extern const struct rx3_image_service rx3_images;
 #endif

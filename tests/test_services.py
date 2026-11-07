@@ -364,6 +364,79 @@ int main(void) {
 }
 ''', ['core/services/rx3_images.c'], ['-D_DEFAULT_SOURCE', '-D_DARWIN_C_SOURCE', '-Wno-unused-function'])
 
+    def test_a_draw_listener_hears_every_id_drawn(self):
+        # A relabel cannot name its id in advance: the deck decides which
+        # record carries which caption, so the id has to arrive with the draw.
+        self.run_units(HOOKS + r'''
+#include "core/services/rx3_images.h"
+static void *original_for(unsigned long a) { (void)a; return (void *)1; }
+static const char listener = 0;
+static unsigned heard, last;
+static void note(unsigned int image) { heard++; last = image; }
+int main(void) {
+    assert(!rx3_images.claim_drawn(0, note));
+    assert(!rx3_images.claim_drawn(&listener, 0));
+    assert(rx3_images.claim_drawn(&listener, note));
+    /* Every id, inside a watch range or not: the module filters its own. */
+    rx3_image_drawn(0x1439); assert(heard == 1 && last == 0x1439);
+    rx3_image_drawn(0x1500); assert(heard == 2 && last == 0x1500);
+    /* Registering again replaces the callback rather than adding a second. */
+    assert(rx3_images.claim_drawn(&listener, note));
+    rx3_image_drawn(0x1440); assert(heard == 3);
+    /* Releasing the owner stops the callbacks. */
+    rx3_images.unregister_owner(&listener);
+    rx3_image_drawn(0x1441); assert(heard == 3);
+    return 0;
+}
+''', ['core/services/rx3_images.c'], ['-D_DEFAULT_SOURCE', '-D_DARWIN_C_SOURCE', '-Wno-unused-function'])
+
+    def test_a_caption_can_be_painted_after_the_tables_published(self):
+        # The whole point: one boot names the id, because the paint waits for
+        # the draw. The record's own size, ground and ink still decide the
+        # result, and repainting the same record is a no-op rather than a
+        # second paint over the first.
+        self.run_units(HOOKS + r'''
+#include "core/services/rx3_images.h"
+#include <string.h>
+static void *original_for(unsigned long a) { (void)a; return (void *)1; }
+static const char caption = 0;
+static const uint8_t mask[4] = {15, 15, 15, 15};
+static unsigned record_at(uint8_t *table, unsigned image, unsigned field) {
+    uint32_t value; memcpy(&value, table + image * 44u + field, 4u); return value;
+}
+int main(void) {
+    /* Three records, then the pixels the first of them points at. */
+    static uint8_t table[3 * 44 + 8 * 2 * 2 * 2];
+    uint16_t width = 8, height = 2;
+    uint32_t at = 3 * 44, no_palette = 0;
+    memset(table, 0, sizeof(table));
+    memcpy(table + 44 + 4, &width, 2);
+    memcpy(table + 44 + 6, &height, 2);
+    table[44 + 0x18] = 1;
+    memcpy(table + 44 + 0x20, &at, 4);
+    memcpy(table + 44 + 0x24, &no_palette, 4);
+    uint16_t *stock = (uint16_t *)(table + at);
+    for (unsigned i = 0; i < 16; i++) stock[i] = 0x0010;
+    stock[15] = 0xffff;
+    /* Nothing paints before the tables publish: there is no table yet. */
+    assert(!rx3_images.paint_masked_now(&caption, 1, 2, 2, mask));
+    rx3_image_publish_tables(table, 0, table);
+    assert(!rx3_images.paint_masked_now(&caption, 0x15cd, 2, 2, mask));
+    assert(!rx3_images.paint_masked_now(0, 1, 2, 2, mask));
+    assert(rx3_images.paint_masked_now(&caption, 1, 2, 2, mask));
+    /* The record now points at painted pixels, not at the stock ones. */
+    assert(record_at(table, 1, 0x20) != at);
+    assert(table[44 + 0x18] == 1 && table[44 + 0x19] == 0);
+    /* A second request for the same record leaves the first paint alone. */
+    assert(rx3_images.paint_masked_now(&caption, 1, 2, 2, mask));
+    assert(record_at(table, 1, 0x20) != at);
+    /* An index record would need its palette translated: keep its artwork. */
+    table[2 * 44 + 0x19] = 1;
+    assert(!rx3_images.paint_masked_now(&caption, 2, 2, 2, mask));
+    return 0;
+}
+''', ['core/services/rx3_images.c'], ['-D_DEFAULT_SOURCE', '-D_DARWIN_C_SOURCE', '-Wno-unused-function'])
+
 
 if __name__ == '__main__':
     unittest.main()

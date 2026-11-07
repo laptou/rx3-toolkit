@@ -95,6 +95,27 @@ static int watch_ids(const void *owner, unsigned int first, unsigned int last)
     return 0;
 }
 
+/* Which stock ids are being drawn, told to whoever asked. A module cannot
+   know in advance which record the player puts a caption in -- the deck
+   decides that -- so the draw is the only place the answer arrives. */
+#define DRAWN_LIMIT 4u
+struct drawn_listener {
+    const void *owner;
+    void (*fn)(unsigned int);
+};
+static struct drawn_listener drawn_listeners[DRAWN_LIMIT];
+
+/* Painted-after-publish buffers. One per owner and image, reused: a relabel
+   is decided once and the pixels then belong to the published table. */
+#define NOW_LIMIT   8u
+#define NOW_PIXELS  0x2000u
+struct now_paint {
+    const void *owner;
+    unsigned int image;
+    uint16_t *pixels;
+};
+static struct now_paint now_paints[NOW_LIMIT];
+
 static void watch_note(unsigned int image)
 {
     for (unsigned int slot = 0; slot < WATCH_LIMIT; slot++) {
@@ -116,6 +137,13 @@ static void unregister_owner(const void *owner)
         if(variants[i].owner==owner) __atomic_store_n(&variants[i].owner,0,__ATOMIC_SEQ_CST);
     for(unsigned int i=0;i<WATCH_LIMIT;i++)
         if(watches[i].owner==owner) watch_reset(&watches[i],0,0,0);
+    for(unsigned int i=0;i<DRAWN_LIMIT;i++)
+        if(drawn_listeners[i].owner==owner) {
+            __atomic_store_n(&drawn_listeners[i].owner,0,__ATOMIC_SEQ_CST);
+            drawn_listeners[i].fn=0;
+        }
+    for(unsigned int i=0;i<NOW_LIMIT;i++)
+        if(now_paints[i].owner==owner) __atomic_store_n(&now_paints[i].owner,0,__ATOMIC_SEQ_CST);
 }
 unsigned int rx3_image_count(void)
 {
@@ -219,6 +247,23 @@ static int replace_native(const void *owner, unsigned int image, const uint16_t 
 /* Replace a stock record with a mask painted in that record's own colours.
    Nothing is allocated here: the size, the ground and the ink all come from
    the record, which is only readable while the tables are being built. */
+static int claim_drawn(const void *owner, void (*fn)(unsigned int))
+{
+    if (!owner || !fn) return 0;
+    for (unsigned int i = 0; i < DRAWN_LIMIT; i++)
+        if (drawn_listeners[i].owner == owner) {
+            drawn_listeners[i].fn = fn;
+            return 1;
+        }
+    for (unsigned int i = 0; i < DRAWN_LIMIT; i++)
+        if (!drawn_listeners[i].owner) {
+            drawn_listeners[i].owner = owner;
+            drawn_listeners[i].fn = fn;
+            return 1;
+        }
+    return 0;
+}
+
 static int replace_masked(const void *owner, unsigned int image,
                           unsigned int mask_width, unsigned int mask_height,
                           const uint8_t *coverage)
@@ -334,6 +379,68 @@ void rx3_image_install_replacements(uint8_t *table, int light)
     }
 }
 
+/* A mask painted after the tables published, from the record the player is
+   about to draw. Until this existed a caption could only be relabelled by
+   naming its id before the table was built, and the deck decides those ids.
+   The draw is where the answer arrives, so the paint happens here instead.
+   The size, the ground and the ink still all come from the record. */
+static int paint_masked_now(const void *owner, unsigned int image,
+                            unsigned int mask_width, unsigned int mask_height,
+                            const uint8_t *coverage)
+{
+    uint8_t *record;
+    uint16_t width, height;
+    uint32_t offset, no_palette = 0u;
+    unsigned int count;
+    if (!owner || !coverage || !mask_width || !mask_height || !dark_table ||
+        image >= RX3_STOCK_IMAGE_COUNT) return 0;
+    if (!__atomic_load_n(&tables_published, __ATOMIC_SEQ_CST)) return 0;
+    for (unsigned int i = 0; i < NOW_LIMIT; i++)
+        if (now_paints[i].owner == owner && now_paints[i].image == image) return 1;
+    record = dark_table + image * 44u;
+    memcpy(&width, record + 4u, 2u);
+    memcpy(&height, record + 6u, 2u);
+    memcpy(&offset, record + 0x20u, 4u);
+    /* A paletted record would need its palette translated, and no field here
+       records how many entries it has. Keep its artwork. */
+    if (!width || !height || record[0x19u]) return 0;
+    count = (unsigned int)width * (unsigned int)height;
+    if (count > NOW_PIXELS) return 0;
+    uint16_t *pixels = 0;
+    for (unsigned int i = 0; i < NOW_LIMIT && !pixels; i++)
+        if (!now_paints[i].owner) {
+            pixels = mmap(0, (size_t)count * 2u, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (pixels == MAP_FAILED) return 0;
+            now_paints[i].owner = owner;
+            now_paints[i].image = image;
+            now_paints[i].pixels = pixels;
+        }
+    if (!pixels) return 0;
+    const uint16_t *stock = (const void *)(dark_table + offset);
+    uint16_t ground = stock[0];
+    uint16_t ink = rx3_label_ink(stock, count, ground);
+    for (unsigned int i = 0; i < count; i++) pixels[i] = ground;
+    const struct rx3_label_mask mask = { mask_width, mask_height, coverage };
+    rx3_label_paint(pixels, width, height, ground, ink, &mask);
+    /* Both tables point at the one painted buffer: the theme decides which
+       record is drawn, and a relabel must survive the theme changing. */
+    for (int light = 0; light < 2; light++) {
+        uint8_t *table = light ? light_table : dark_table;
+        if (!table) continue;
+        uint8_t *into = table + image * 44u;
+        uint32_t at = (uint32_t)(unsigned long)pixels - (uint32_t)(unsigned long)table;
+        memcpy(into + 4u, &width, 2u);
+        memcpy(into + 6u, &height, 2u);
+        into[0x18u] = 1u;
+        into[0x19u] = 0u;
+        memcpy(into + 0x20u, &at, 4u);
+        memcpy(into + 0x24u, &no_palette, 4u);
+    }
+    rx3_log_number("masked image painted after publish = ", image);
+    return 1;
+}
+
 int rx3_image_variants_wanted(void) { return policy != 0; }
 
 void rx3_image_publish_tables(uint8_t *dark, uint8_t *light, const uint8_t *stock)
@@ -351,6 +458,10 @@ void rx3_image_drawn(unsigned int image)
 {
     const struct rx3_image_policy *current = __atomic_load_n(&policy, __ATOMIC_SEQ_CST);
     watch_note(image);
+    for (unsigned int i = 0; i < DRAWN_LIMIT; i++) {
+        void (*fn)(unsigned int) = drawn_listeners[i].fn;
+        if (fn && drawn_listeners[i].owner) fn(image);
+    }
     if (current && current->drawn && image < RX3_STOCK_IMAGE_COUNT) current->drawn(image);
 }
 
@@ -459,5 +570,5 @@ const struct rx3_image_service rx3_images={
     register_recolour, unregister_owner, rx3_image_register_bitmap,
     replace_native, release_native, claim_variants, release_variants,
     variants_ready, native_image, publish_variant, select_variant, light_active,
-    replace_masked, watch_ids
+    replace_masked, watch_ids, claim_drawn, paint_masked_now
 };
