@@ -59,6 +59,12 @@ struct rx3_image_service {
     /* Render thread, at a render-pass boundary. */
     void (*select_variant)(int light);
     int (*light_active)(void);
+    /* A stock record as the player ships it, measured before the tables are
+       built: real width, height, format, and the record's own pixels. This is
+       how a module learns what it is replacing instead of hardcoding a size.
+       Returns 0 until the player's image table is up, for a record with no
+       bitmap of its own, and once the tables have published. */
+    int (*stock_image)(unsigned int image, struct rx3_native_image *);
 };
 extern const struct rx3_image_service rx3_images;
 #endif

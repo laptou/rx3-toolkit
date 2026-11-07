@@ -109,7 +109,7 @@ void *rx3_image_resolve(unsigned int id,void *(*lookup)(unsigned int),const void
 
 /* Native record replacements. The pixels belong to the contributor and stay
    referenced by every table built after registration. */
-#define REPLACEMENT_LIMIT 4u
+#define REPLACEMENT_LIMIT 8u
 struct replacement {
     const void *owner;
     unsigned int image, width, height;
@@ -295,6 +295,34 @@ static int native_image(unsigned int image, struct rx3_native_image *out)
     return 1;
 }
 
+/* A stock record as the player ships it, measured through the table the
+   global still points at: modules call this while starting, before the
+   performance tables are built, to learn a record's real size and colours
+   instead of a size someone guessed. Returns 0 until the player's table is
+   up, for a record with no bitmap of its own, or once the tables publish. */
+static int stock_image(unsigned int image, struct rx3_native_image *out)
+{
+    uint8_t *table = stock_table ? (uint8_t *)stock_table
+                                : *(uint8_t **)RX3_IMAGE_TABLE_POINTER;
+    if (!out || !table || image >= RX3_STOCK_IMAGE_COUNT) return 0;
+    const uint8_t *record = table + image * 44u;
+    uint16_t width, height;
+    uint32_t offset;
+    memcpy(&width, record + 4u, 2u);
+    memcpy(&height, record + 6u, 2u);
+    memcpy(&offset, record + 0x20u, 4u);
+    if (!width || !height) return 0;
+    const uint16_t *pixels = (const void *)(table + offset);
+    uint32_t from_stock = (uint32_t)(unsigned long)pixels - (uint32_t)(unsigned long)table;
+    if (from_stock <= RX3_STOCK_IMAGE_COUNT * 44u + 43u) return 0;
+    out->width = width;
+    out->height = height;
+    out->format = record[0x18u];
+    out->paletted = record[0x19u];
+    out->pixels = pixels;
+    return 1;
+}
+
 static int publish_variant(unsigned int image, const uint16_t *pixels)
 {
     if (!light_table || !pixels || image >= RX3_STOCK_IMAGE_COUNT || replaced(image)) return 0;
@@ -315,5 +343,6 @@ unsigned int rx3_image_contributions(void)
 const struct rx3_image_service rx3_images={
     register_recolour, unregister_owner, rx3_image_register_bitmap,
     replace_native, release_native, claim_variants, release_variants,
-    variants_ready, native_image, publish_variant, select_variant, light_active
+    variants_ready, native_image, publish_variant, select_variant, light_active,
+    stock_image
 };
