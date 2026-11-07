@@ -17,6 +17,7 @@ void *install_pc_ldr_hook(struct installed_hook *, unsigned long, const uint8_t[
    instruction before that load and the load itself; `after` runs with the
    frame already popped, before control returns to the caller. Returns the
    trampoline, or 0 when the guard does not match or the tail is not one. */
-void *install_return_hook(struct installed_hook *, unsigned long, const uint8_t[8], void *);
+void *install_return_hook(struct installed_hook *, unsigned long,
+                          uint32_t before, uint32_t tail, void *);
 int uninstall_hook(struct installed_hook *);
 #endif

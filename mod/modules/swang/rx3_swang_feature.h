@@ -101,9 +101,9 @@ static unsigned sw_scan_px;
    there is what keeps a tick on screen: a tick painted at the beat setup is
    otherwise rewritten by whatever paints that column afterwards. */
 #define SW_FRAME_TAIL ((unsigned long)0x0024fcd8)
-static const uint8_t sw_frame_guard[8] = {
-    0x04, 0x8b, 0xbd, 0xec, 0xe8, 0xbd, 0x8f, 0xf0
-};
+/* the two instructions, decoded. the second is `ldmia sp!,{r4-r11,pc}`. */
+#define SW_FRAME_BEFORE 0xecbd8b04u   /* vpop {d8,d9}          */
+#define SW_FRAME_RETURN 0xe8bd8ff0u   /* ldmia sp!,{r4-r11,pc} */
 static struct installed_hook sw_frame_hook;
 static int sw_frame_installed;
 static unsigned sw_frame_callbacks;
@@ -500,7 +500,7 @@ static int swang_feature_install(void)
        until they scroll out. */
     sw_frame_installed = framework->install_return_hook &&
         framework->install_return_hook(&sw_frame_hook, SW_FRAME_TAIL,
-                                       sw_frame_guard,
+                                       SW_FRAME_BEFORE, SW_FRAME_RETURN,
                                        (void *)swang_frame_painted) != 0;
     framework->log_line(sw_frame_installed
                             ? "swang: ticks repaint after the waveform draw"

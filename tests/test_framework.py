@@ -61,7 +61,7 @@ extern int unsetenv(const char *);
 struct installed_hook;
 __attribute__((weak)) void *install_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { (void)h; (void)a; (void)g; (void)r; return 0; }
 __attribute__((weak)) void *install_pc_ldr_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { (void)h; (void)a; (void)g; (void)r; return 0; }
-__attribute__((weak)) void *install_return_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { (void)h; (void)a; (void)g; (void)r; return 0; }
+__attribute__((weak)) void *install_return_hook(struct installed_hook *h, unsigned long a, uint32_t b, uint32_t t, void *r) { (void)h; (void)a; (void)b; (void)t; (void)r; return 0; }
 __attribute__((weak)) int uninstall_hook(struct installed_hook *h) { (void)h; return 1; }
 __attribute__((weak)) int detach_hook(struct installed_hook *h) { (void)h; return 1; }
 __attribute__((weak)) int release_hook(struct installed_hook *h) { (void)h; return 1; }

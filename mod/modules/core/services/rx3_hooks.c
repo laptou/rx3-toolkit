@@ -120,13 +120,15 @@ static void *install_raw_pc_ldr_hook(struct hook_record *hook,
    last, then the tail load -- and the trampoline replays both with the load's
    `pc` rewritten to `lr`, then runs the module and returns to the original
    caller. Eight bytes in, so the patch needs no branch range. */
+/* The two instructions are given as words, not bytes: the guard here is a
+   pair of decoded instructions, so there is no byte order to get wrong. */
 static void *install_raw_return_hook(struct hook_record *hook, unsigned long address,
-                                     const uint8_t guard[8], void *after)
+                                     uint32_t before, uint32_t tail, void *after)
 {
-    if (memcmp((const void *)address, guard, 8))
+    if (*(const uint32_t *)address != before)
         return 0;
-    uint32_t before = *(const uint32_t *)address;
-    uint32_t tail = *(const uint32_t *)(address + 4u);
+    if (*(const uint32_t *)(address + 4u) != tail)
+        return 0;
     /* ldmia sp!,{...,pc}, with lr not in the list: lr would be popped as a
        data register and there would be no return address left to keep. */
     if ((tail & 0xffff0000u) != 0xe8bd0000u) return 0;
@@ -164,7 +166,7 @@ static void *install_raw_return_hook(struct hook_record *hook, unsigned long add
     }
 
     hook->address = address;
-    memcpy(hook->original, guard, sizeof(hook->original));
+    memcpy(hook->original, (const void *)address, sizeof(hook->original));
     hook->trampoline = trampoline;
     return trampoline;
 }
@@ -175,11 +177,11 @@ static void *install_raw_return_hook(struct hook_record *hook, unsigned long add
  */
 #define RX3_HOOK_PROLOGUE 0
 #define RX3_HOOK_PC_LDR 1
-#define RX3_HOOK_RETURN 2
-static void *install_owned_hook(struct installed_hook *handle, unsigned long address,
-                                const uint8_t guard[8], void *replacement, int mode)
+/* One hook per handle, and no two hooks within one instruction of each other:
+   the second would patch bytes the first already owns. */
+static struct hook_record *claim_slot(struct installed_hook *handle, unsigned long address)
 {
-    if (!handle || handle->record || !address || !guard || !replacement) return 0;
+    if (!handle || handle->record || !address) return 0;
     struct hook_record *slot = 0;
     for (unsigned int i = 0; i < RX3_HOOK_LIMIT; i++) {
         if (!records[i].owner) { if (!slot) slot = &records[i]; continue; }
@@ -187,12 +189,17 @@ static void *install_owned_hook(struct installed_hook *handle, unsigned long add
         if ((address >= other && address - other < 8u) ||
             (other > address && other - address < 8u)) return 0;
     }
+    return slot;
+}
+static void *install_owned_hook(struct installed_hook *handle, unsigned long address,
+                                const uint8_t guard[8], void *replacement, int mode)
+{
+    if (!guard || !replacement) return 0;
+    struct hook_record *slot = claim_slot(handle, address);
     if (!slot) return 0;
     void *original = mode == RX3_HOOK_PC_LDR
                          ? install_raw_pc_ldr_hook(slot, address, guard, replacement)
-                         : mode == RX3_HOOK_RETURN
-                               ? install_raw_return_hook(slot, address, guard, replacement)
-                               : install_raw_hook(slot, address, guard, replacement);
+                         : install_raw_hook(slot, address, guard, replacement);
     if (!original) return 0;
     slot->owner = handle;
     handle->record = slot;
@@ -211,9 +218,16 @@ void *install_pc_ldr_hook(struct installed_hook *handle, unsigned long address,
                               RX3_HOOK_PC_LDR);
 }
 void *install_return_hook(struct installed_hook *handle, unsigned long address,
-                           const uint8_t guard[8], void *after)
+                           uint32_t before, uint32_t tail, void *after)
 {
-    return install_owned_hook(handle, address, guard, after, RX3_HOOK_RETURN);
+    if (!after) return 0;
+    struct hook_record *slot = claim_slot(handle, address);
+    if (!slot) return 0;
+    void *original = install_raw_return_hook(slot, address, before, tail, after);
+    if (!original) return 0;
+    slot->owner = handle;
+    handle->record = slot;
+    return original;
 }
 int hook_is_installed(const struct installed_hook *handle)
 {

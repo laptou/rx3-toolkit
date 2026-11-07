@@ -19,7 +19,7 @@ static void *fake_install(struct installed_hook *h, unsigned long a, const uint8
 }
 void *install_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { return fake_install(h, a, g, r); }
 void *install_pc_ldr_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { return fake_install(h, a, g, r); }
-void *install_return_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { return fake_install(h, a, g, r); }
+void *install_return_hook(struct installed_hook *h, unsigned long a, uint32_t b, uint32_t t, void *r) { (void)b; (void)t; return fake_install(h, a, 0, r); }
 int detach_hook(struct installed_hook *h) { (void)h; detached++; return !refuse_detach; }
 int release_hook(struct installed_hook *h) { (void)h; released++; return 1; }
 int uninstall_hook(struct installed_hook *h) { (void)h; return 1; }
