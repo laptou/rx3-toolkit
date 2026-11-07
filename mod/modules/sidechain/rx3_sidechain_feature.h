@@ -23,10 +23,11 @@
  *
  * on screen, the play screen's beat fx block names its beat number by a
  * label index (+0x10); each ratio writes its own label there, so rbp
- * redraws when the ratio changes. the caption images and the beat number's
- * lettering keep their stock artwork in this port: relabelling them needs
- * the stock records' measured sizes, which only a player or an imagedata
- * dump can give.
+ * redraws when the ratio changes. the four caption variants (0x1449..0x144c)
+ * are relabelled to SIDECHAIN from their own measured records, so each keeps
+ * the ground and the ink the player gave it. the beat number's lettering and
+ * the select grid's tiles stay stock until their sizes are read off the
+ * deck: sc_label_measure logs them.
  *
  * CH1 runs before CH2, so a CH2 trigger keys CH1 one block late.
  */
@@ -70,6 +71,7 @@ static volatile unsigned sc_ratio_index = SC_RATIO_DEFAULT;
 static int sc_logged;
 
 #include "rx3_sidechain_meter.h"
+#include "rx3_sidechain_labels.h"
 
 /* the block's peak through the key filter. this level is what the meter
    draws and what the other deck ducks by. */
@@ -229,11 +231,15 @@ static int sidechain_feature_install(void)
         framework->log_line("sidechain refused: no draw watcher slot");
         return 0;
     }
+    /* Cosmetic, and last: a caption that will not paint is not a reason to
+       withhold the effect. */
+    sc_labels_install();
     return 1;
 }
 
 static void sidechain_feature_remove(void)
 {
+    sc_labels_release();
     framework->beatfx->unregister_owner(&sc_owner);
     framework->overlays->unwatch_draw(&sc_owner);
     framework->overlays->release(&sc_owner);

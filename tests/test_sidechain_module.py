@@ -84,17 +84,43 @@ class SidechainModuleTests(unittest.TestCase):
         self.assertIn("SC_METER_IDLE_MS", self.meter)
         self.assertIn("RX3_OVERLAY_BELOW", self.meter)
 
-    def test_the_relabelled_artwork_is_dropped_not_faked(self):
-        for gone in ("rx3_relabel_image", "HELIX_CAPTION_FIRST",
-                     "BEAT_NUMBER_IMAGES", "rx3_label_mask"):
-            self.assertNotIn(gone, self.feature)
-        self.assertIn("stock artwork in this port",
+    def test_the_caption_is_measured_not_guessed(self):
+        labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()
+        self.assertIn("stock_image", labels)
+        self.assertIn("replace_native", labels)
+        self.assertIn("SC_CAPTION_FIRST_ID 0x1449u", labels)
+        self.assertIn("SC_CAPTION_COUNT 4u", labels)
+        # the mask's own rasterisation is the one size that is fixed.
+        self.assertIn("sc_label_caption_coverage[1856]", labels)
+        for guessed in ("160u", "40u", "0xf81f", "0xf81fu"):
+            self.assertNotIn(guessed, labels)
+        self.assertIn("sc_labels_install();", self.feature)
+        self.assertIn("sc_labels_release();", self.feature)
+
+    def test_the_caption_waits_for_the_record_it_paints_over(self):
+        labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()
+        self.assertIn("stock.format != 1u", labels)
+        self.assertIn("stock.paletted", labels)
+        # freeing after publication would leave the live table pointing at
+        # released memory, so the service's refusal has to be honoured.
+        self.assertIn("if (!framework->images->release_native(&sc_owner))",
+                      labels)
+
+    def test_the_tile_geometry_is_logged_before_it_is_used(self):
+        labels = (MODULES / "sidechain/rx3_sidechain_labels.h").read_text()
+        self.assertIn("SC_TILE_FIRST_ID 0x15aau", labels)
+        self.assertIn("SC_TILE_COUNT 3u", labels)
+        self.assertIn("sidechain: select tile width = ", labels)
+        self.assertIn("sidechain: select tile height = ", labels)
+        self.assertIn("sidechain: beat number width = ", labels)
+        self.assertIn("written to the module log",
                       (MODULES / "sidechain/README.md").read_text())
 
     def test_build_inputs_are_declared(self):
         self.assertEqual(
             self.manifest["build_files"],
             ["rx3_sidechain_dsp.h", "rx3_sidechain_meter.h",
+             "rx3_label_paint.h", "rx3_sidechain_labels.h",
              "rx3_sidechain_feature.h", "rx3_sidechain_module.c"])
         self.assertEqual(self.manifest["category"], "beatjump")
 

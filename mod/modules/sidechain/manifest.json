@@ -30,6 +30,8 @@
   "build_files": [
     "rx3_sidechain_dsp.h",
     "rx3_sidechain_meter.h",
+    "rx3_label_paint.h",
+    "rx3_sidechain_labels.h",
     "rx3_sidechain_feature.h",
     "rx3_sidechain_module.c"
   ]

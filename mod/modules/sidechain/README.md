@@ -5,6 +5,8 @@ Firmware 1.19 only. The HELIX beat fx becomes a sidechain compressor: while HELI
 
 The controls keep their knobs: DEPTH is the threshold, the BEAT arrows step the ratio (2:1 to inf:1), TIME is the release. The play screen's beat fx block shows the ratio in the beat-number field. A compressor meter scrolls across the seam between the two waveforms while HELIX runs: the trigger's level rises from the bottom in grey, the threshold is a dotted line, and the gain reduction on the ducked channel hangs from the top in orange.
 
-The caption images and the beat number's lettering keep their stock artwork in this port — relabelling them needs the stock records' measured sizes, which only a player or an imagedata dump can give. On screen the effect still reads HELIX everywhere except the beat number, which reads the ratio's stock label.
+The four caption images read SIDECHAIN. Each one is painted from its own stock record, measured at startup through the image service: the record gives the size, the ground it was drawn on and its ink, so the dim and white variants and the black and blue grounds all keep their own colouring. No size or colour is hardcoded, and the mask is box-averaged to whatever size the record turns out to be.
+
+The beat number's lettering and the select grid's tiles stay stock. Their geometry is measured and written to the module log (`sidechain: select tile …`, `sidechain: beat number …`), so the same paint can be applied to them once their size is known.
 
 Nothing here has run on hardware. The channel stage's block, the operate skip, the BEAT arrow takeover and the meter's compositing all still need the player.
