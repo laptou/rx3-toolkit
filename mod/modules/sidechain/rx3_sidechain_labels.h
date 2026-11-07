@@ -63,6 +63,9 @@ static struct sc_label_slot {
     unsigned long bytes;
 } sc_label_slots[SC_LABEL_SLOTS];
 static unsigned sc_label_published;
+/* why the last refusal happened: 1 no stock record, 2 not plain rgb565,
+   3 the image service refused the slot, 4 no room left here. */
+static unsigned sc_label_refusal;
 
 /* Paint one stock caption and take it over. 0 when the record cannot be
    measured, when it is not plain rgb565, or when the image service refuses
@@ -74,24 +77,33 @@ static int sc_label_publish(unsigned image)
     uint16_t *pixels;
     unsigned count;
     unsigned long bytes;
-    if (sc_label_published >= SC_LABEL_SLOTS)
+    if (sc_label_published >= SC_LABEL_SLOTS) {
+        sc_label_refusal = 4u;
         return 0;
-    if (!framework->images->stock_image(image, &stock))
+    }
+    if (!framework->images->stock_image(image, &stock)) {
+        sc_label_refusal = 1u;
         return 0;
+    }
     count = (unsigned)stock.width * (unsigned)stock.height;
-    if (!count || stock.format != 1u || stock.paletted)
+    if (!count || stock.format != 1u || stock.paletted) {
+        sc_label_refusal = 2u;
         return 0;
+    }
     bytes = (unsigned long)count * 2u;
     pixels = mmap(0, (size_t)bytes, PROT_READ | PROT_WRITE,
                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (pixels == MAP_FAILED)
+    if (pixels == MAP_FAILED) {
+        sc_label_refusal = 3u;
         return 0;
+    }
     read = (const uint16_t *)stock.pixels;
     rx3_label_paint(pixels, stock.width, stock.height, read[0],
                     rx3_label_ink(read, count, read[0]), &sc_label_caption);
     if (!framework->images->replace_native(&sc_owner, image, pixels, pixels,
                                            stock.width, stock.height)) {
         munmap(pixels, (size_t)bytes);
+        sc_label_refusal = 3u;
         return 0;
     }
     sc_label_slots[sc_label_published].pixels = pixels;
@@ -137,6 +149,9 @@ static void sc_labels_install(void)
     for (index = 0; index < SC_CAPTION_COUNT; index++)
         made += (unsigned)sc_label_publish(SC_CAPTION_FIRST_ID + index);
     framework->log_number("sidechain: captions relabelled = ", made);
+    if (made < SC_CAPTION_COUNT)
+        framework->log_number("sidechain: the caption refusal was = ",
+                              sc_label_refusal);
     sc_label_measure();
 }
 
