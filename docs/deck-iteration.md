@@ -246,6 +246,16 @@ absence so it cannot creep back.
   its image table after module init. Anything that needs a record's width,
   height or ground is painted core-side, in `replace_masked`, while the table
   is copied.
+- **Watching a range names a set; it does not pick one of them.** Fourteen
+  effects share the caption band `0x1439..0x1470`, four variants each, and the
+  deck decides which group belongs to which effect. Ordering the band by the
+  effect numbering is a guess that one known id can always be made to fit, so
+  do not make it. `rx3_images.claim_drawn(owner, fn)` hands the module every
+  drawn id and `paint_masked_now` paints the record after the tables publish:
+  the same caption id drawn twice running while the effect is the shown one is
+  the caption on the play screen, because the select grid draws every effect's
+  caption in that band. The paint names itself in the log, so the second boot
+  can hard-code what the first one learned.
 
 ## Tests, manifests and the toolchain
 
