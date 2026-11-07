@@ -110,12 +110,74 @@ static void *install_raw_pc_ldr_hook(struct hook_record *hook,
 }
 
 
+/* Return-tail detours. Some rbp functions end a frame by returning straight
+   out of it: `ldmia sp!,{r4-r11,pc}` pops the callee-saved registers and the
+   return address in one instruction, so there is no prologue to steal and
+   nothing left to jump back into. rbp's waveform pass is one of those, and a
+   module that paints its own pixels needs a turn after that pop.
+
+   The detour covers the two instructions that end the frame -- whatever runs
+   last, then the tail load -- and the trampoline replays both with the load's
+   `pc` rewritten to `lr`, then runs the module and returns to the original
+   caller. Eight bytes in, so the patch needs no branch range. */
+static void *install_raw_return_hook(struct hook_record *hook, unsigned long address,
+                                     const uint8_t guard[8], void *after)
+{
+    if (memcmp((const void *)address, guard, 8))
+        return 0;
+    uint32_t before = *(const uint32_t *)address;
+    uint32_t tail = *(const uint32_t *)(address + 4u);
+    /* ldmia sp!,{...,pc}, with lr not in the list: lr would be popped as a
+       data register and there would be no return address left to keep. */
+    if ((tail & 0xffff0000u) != 0xe8bd0000u) return 0;
+    if (!(tail & 0x8000u) || (tail & 0x4000u)) return 0;
+    /* The replayed instruction carries no PC-relative dependency. */
+    if ((before & 0xffff0000u) == 0xe59f0000u) return 0;
+    if ((before & 0x0f000000u) == 0x0a000000u) return 0;
+    if ((before & 0x0ffffff0u) == 0x012fff10u) return 0;
+
+    uint32_t *trampoline = mmap(0, 4096, PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (trampoline == MAP_FAILED)
+        return 0;
+    trampoline[0] = before;                          /* last instruction   */
+    trampoline[1] = (tail & ~0x8000u) | 0x4000u;     /* pc -> lr           */
+    trampoline[2] = 0xe24dd008u;                     /* sub sp,sp,#8       */
+    trampoline[3] = 0xe58de000u;                     /* str lr,[sp]        */
+    trampoline[4] = 0xe59fc00cu;                     /* ldr r12,[pc,#12]   */
+    trampoline[5] = 0xe12fff3cu;                     /* blx r12            */
+    trampoline[6] = 0xe59dc000u;                     /* ldr r12,[sp]       */
+    trampoline[7] = 0xe28dd008u;                     /* add sp,sp,#8       */
+    trampoline[8] = 0xe12fff1cu;                     /* bx r12             */
+    trampoline[9] = (uint32_t)(unsigned long)after;
+    clear_instruction_cache((unsigned long)trampoline,
+                            (unsigned long)trampoline + 40u);
+    if (mprotect(trampoline, 4096, PROT_READ | PROT_EXEC)) {
+        munmap(trampoline, 4096);
+        return 0;
+    }
+
+    uint32_t patch[2] = {0xe51ff004u, (uint32_t)(unsigned long)trampoline};
+    if (write_code(address, patch, sizeof(patch))) {
+        munmap(trampoline, 4096);
+        return 0;
+    }
+
+    hook->address = address;
+    memcpy(hook->original, guard, sizeof(hook->original));
+    hook->trampoline = trampoline;
+    return trampoline;
+}
+
 /* A single pool owns every detour, even across separately compiled modules.
  * A detached address stays reserved until callbacks have drained and its
  * trampoline has been released. No implicit hook chaining is allowed.
  */
+#define RX3_HOOK_PROLOGUE 0
+#define RX3_HOOK_PC_LDR 1
+#define RX3_HOOK_RETURN 2
 static void *install_owned_hook(struct installed_hook *handle, unsigned long address,
-                                const uint8_t guard[8], void *replacement, int pc_ldr)
+                                const uint8_t guard[8], void *replacement, int mode)
 {
     if (!handle || handle->record || !address || !guard || !replacement) return 0;
     struct hook_record *slot = 0;
@@ -126,8 +188,11 @@ static void *install_owned_hook(struct installed_hook *handle, unsigned long add
             (other > address && other - address < 8u)) return 0;
     }
     if (!slot) return 0;
-    void *original = pc_ldr ? install_raw_pc_ldr_hook(slot, address, guard, replacement) :
-                             install_raw_hook(slot, address, guard, replacement);
+    void *original = mode == RX3_HOOK_PC_LDR
+                         ? install_raw_pc_ldr_hook(slot, address, guard, replacement)
+                         : mode == RX3_HOOK_RETURN
+                               ? install_raw_return_hook(slot, address, guard, replacement)
+                               : install_raw_hook(slot, address, guard, replacement);
     if (!original) return 0;
     slot->owner = handle;
     handle->record = slot;
@@ -136,12 +201,19 @@ static void *install_owned_hook(struct installed_hook *handle, unsigned long add
 void *install_hook(struct installed_hook *handle, unsigned long address,
                     const uint8_t guard[8], void *replacement)
 {
-    return install_owned_hook(handle, address, guard, replacement, 0);
+    return install_owned_hook(handle, address, guard, replacement,
+                              RX3_HOOK_PROLOGUE);
 }
 void *install_pc_ldr_hook(struct installed_hook *handle, unsigned long address,
                            const uint8_t guard[8], void *replacement)
 {
-    return install_owned_hook(handle, address, guard, replacement, 1);
+    return install_owned_hook(handle, address, guard, replacement,
+                              RX3_HOOK_PC_LDR);
+}
+void *install_return_hook(struct installed_hook *handle, unsigned long address,
+                           const uint8_t guard[8], void *after)
+{
+    return install_owned_hook(handle, address, guard, after, RX3_HOOK_RETURN);
 }
 int hook_is_installed(const struct installed_hook *handle)
 {

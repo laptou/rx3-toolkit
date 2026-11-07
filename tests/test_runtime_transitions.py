@@ -834,6 +834,7 @@ static void rx3_log_number(const char *s,unsigned long n){(void)s;(void)n;}
 struct installed_hook;
 static void *install_hook(struct installed_hook *h,unsigned long a,const uint8_t g[8],void *r){(void)h;(void)a;(void)g;(void)r;return 0;}
 static void *install_pc_ldr_hook(struct installed_hook *h,unsigned long a,const uint8_t g[8],void *r){(void)h;(void)a;(void)g;(void)r;return 0;}
+static void *install_return_hook(struct installed_hook *h,unsigned long a,const uint8_t g[8],void *r){(void)h;(void)a;(void)g;(void)r;return 0;}
 static int detach_hook(struct installed_hook *h){(void)h;return 1;}
 static int release_hook(struct installed_hook *h){(void)h;return 1;}
 static int native(void *p,const void *i) {

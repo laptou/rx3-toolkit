@@ -12,5 +12,11 @@ int detach_hook(struct installed_hook *);
 int release_hook(struct installed_hook *);
 void *install_hook(struct installed_hook *, unsigned long, const uint8_t[8], void *);
 void *install_pc_ldr_hook(struct installed_hook *, unsigned long, const uint8_t[8], void *);
+/* Detour at the frame's own return, for a function that ends a frame by
+   popping straight out of it (`ldmia sp!,{...,pc}`). `address` carries the
+   instruction before that load and the load itself; `after` runs with the
+   frame already popped, before control returns to the caller. Returns the
+   trampoline, or 0 when the guard does not match or the tail is not one. */
+void *install_return_hook(struct installed_hook *, unsigned long, const uint8_t[8], void *);
 int uninstall_hook(struct installed_hook *);
 #endif

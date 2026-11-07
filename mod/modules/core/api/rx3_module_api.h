@@ -78,6 +78,12 @@ struct rx3_services {
        the loaded register. API 20. */
     void *(*install_pc_ldr_hook)(struct installed_hook *, unsigned long,
                                  const uint8_t[8], void *);
+    /* The return-tail installer, for a function that ends a frame by popping
+       straight out of it. `after` runs once the frame is popped and before
+       the caller resumes, which is the only turn a module gets after rbp has
+       finished painting a frame. API 20. */
+    void *(*install_return_hook)(struct installed_hook *, unsigned long,
+                                 const uint8_t[8], void *);
 };
 struct rx3_module {
     unsigned int version;
