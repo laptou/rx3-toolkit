@@ -14,7 +14,9 @@
 #include "rx3_audio_api.h"
 #include "rx3_memory_api.h"
 #include "rx3_loader_api.h"
-#define RX3_MODULE_API_VERSION 18u
+#include "rx3_overlay_api.h"
+#include "rx3_beatfx_api.h"
+#define RX3_MODULE_API_VERSION 20u
 /* Static composition contract, not a promise of a stable dynamic ABI.
  * All descriptors have process lifetime. Startup is serial and explicit.
  * A failed start is followed by stop, including partial installation.
@@ -66,6 +68,24 @@ struct rx3_services {
                             unsigned int format, uint8_t *out, unsigned int count));
     void (*withdraw_waveform)(unsigned int (*)(unsigned int deck, unsigned int mask,
                               unsigned int format, uint8_t *out, unsigned int count));    const struct rx3_loader_service *loader;
+    /* Windows above the player's own layers, for pixels the image tables
+       cannot reach. Appended in API 19. */
+    const struct rx3_overlay_service *overlays;
+    /* The beat fx the player runs, for a module that owns one. API 20. */
+    const struct rx3_beatfx_service *beatfx;
+    /* The literal-relocating hook installer, for a module whose own guarded
+       hook sits on a PC-relative load: the plain installer cannot preserve
+       the loaded register. API 20. */
+    void *(*install_pc_ldr_hook)(struct installed_hook *, unsigned long,
+                                 const uint8_t[8], void *);
+    /* The return-tail installer, for a function that ends a frame by popping
+       straight out of it. `address` is the instruction before the tail, and
+       the two instructions are given decoded: `before` is replayed, `tail`
+       must be `ldmia sp!,{...,pc}`. `after` runs once the frame is popped and
+       before the caller resumes, which is the only turn a module gets after
+       rbp has finished painting a frame. API 20. */
+    void *(*install_return_hook)(struct installed_hook *, unsigned long,
+                                 uint32_t before, uint32_t tail, void *);
 };
 struct rx3_module {
     unsigned int version;

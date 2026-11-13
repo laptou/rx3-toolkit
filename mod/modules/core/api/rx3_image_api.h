@@ -59,6 +59,39 @@ struct rx3_image_service {
     /* Render thread, at a render-pass boundary. */
     void (*select_variant)(int light);
     int (*light_active)(void);
+    /* Replace a stock record with a coverage mask (0..15 per pixel) painted
+       in that record's own colours. The core paints it while it builds the
+       tables, when the stock record is in hand: width, height, ground and ink
+       all come from the record, so the caller supplies only the mask. That is
+       the whole reason this exists -- a module cannot read a stock record
+       while it starts, because the player has not built its table yet.
+       Returns 0 for a paletted or non-rgb565 record, a used image, or once
+       the tables have published. */
+    int (*replace_masked)(const void *owner, unsigned int image,
+                          unsigned int mask_width, unsigned int mask_height,
+                          const uint8_t *coverage);
+    /* Learn which of a range of stock ids the player draws.
+       A module cannot paint a caption it cannot name, and the ids a screen
+       uses are decided by the player, not by this tree. Watching a range
+       logs the first draw of every id in it -- one line each, bounded by
+       the range -- so one boot answers what static extraction could not.
+       The range must span fewer than 128 ids. Registering again for the same
+       owner replaces the range and forgets what it had seen. */
+    int (*watch_ids)(const void *owner, unsigned int first, unsigned int last);
+    /* Learn which ids a screen draws, as they are drawn: the same problem as
+       watch_ids, answered with a callback instead of a log line, because a
+       relabel has to act on the id it has just been told. Called on the
+       render thread; keep it short. Release with unregister_owner. */
+    int (*claim_drawn)(const void *owner, void (*fn)(unsigned int image));
+    /* Paint a coverage mask into a stock record after the tables published.
+       Reach for this only when the id cannot be known before the draw:
+       replace_masked is the ordinary path, because a paint at table-build
+       time cannot land in the wrong table. The record's own width, height,
+       ground and ink decide the result, and both tables are pointed at the
+       painted pixels, so a theme change keeps the label. */
+    int (*paint_masked_now)(const void *owner, unsigned int image,
+                            unsigned int mask_width, unsigned int mask_height,
+                            const uint8_t *coverage);
 };
 extern const struct rx3_image_service rx3_images;
 #endif

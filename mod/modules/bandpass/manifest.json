@@ -1,0 +1,35 @@
+{
+  "id": "bandpass",
+  "name": {
+    "en": "Band-pass filter",
+    "fr": "Filtre passe-bande"
+  },
+  "description": {
+    "en": "Turn the DUB ECHO sound color fx into a swept, resonant band-pass filter. The COLOR knob moves and narrows the band, the parameter dial sets the resonance.",
+    "fr": "Transforme l'effet de couleur DUB ECHO en filtre passe-bande balayé et résonant. Le bouton COLOR déplace et resserre la bande, le paramètre règle la résonance."
+  },
+  "firmwares": [
+    "1.19"
+  ],
+  "default": false,
+  "order": 63,
+  "category": "beatjump",
+  "runtime_directory": "bandpass",
+  "namespace": "bandpass",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_bandpass_dsp.h",
+    "rx3_bandpass_feature.h",
+    "rx3_bandpass_module.c"
+  ]
+}

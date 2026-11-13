@@ -54,13 +54,20 @@ static const uint8_t now_playing_on_air_guard[8] = {
     0x01, 0x20, 0xa0, 0xe1, 0x30, 0x10, 0x9f, 0xe5
 };
 
-/* Where the player keeps what this reads. The channel byte counts from one. */
+/* Where the player keeps what this reads. The channel byte counts from one.
+   The record is DBIF_MusicInfo: the title is an inline UTF-16 array at 0x28,
+   the path a narrow string at 0x128. The artist and the comment are not in it;
+   the worker reads them from the file's tags. */
 #define NOW_PLAYING_PLAYER_CHANNEL 0x26u
 #define NOW_PLAYING_MUSIC_ID       0x04u
 #define NOW_PLAYING_MUSIC_TITLE    0x28u
+#define NOW_PLAYING_MUSIC_PATH     0x128u
+#define NOW_PLAYING_PATH_BYTES     0x316u
 #define NOW_PLAYING_MIXER_ON_AIR_A 0x64u
 #define NOW_PLAYING_MIXER_ON_AIR_B 0x65u
 #define NOW_PLAYING_TITLE_UNITS    128u
+#define NOW_PLAYING_ARTIST_UNITS   128u
+#define NOW_PLAYING_COMMENT_UNITS  256u
 
 typedef void (*now_playing_status_fn)(void *, int);
 typedef int (*now_playing_load_fn)(void *, const void *);
@@ -76,7 +83,7 @@ typedef int (*now_playing_on_air_fn)(unsigned int, int);
 #define NOW_PLAYING_PORT 50123u
 #define NOW_PLAYING_BROADCAST 0xfffffea9u      /* 169.254.255.255, network order */
 #define NOW_PLAYING_HEARTBEAT_MS 2000
-#define NOW_PLAYING_DATAGRAM_MAX 2048u
+#define NOW_PLAYING_DATAGRAM_MAX 4096u
 
 /* libc names this feature adds to the core's set. rbp imports every one of
    them itself, which is what tests/test_hook_symbols.py asks to be confirmed. */

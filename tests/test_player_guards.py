@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Executable tests for the guards that decide whether to stop the player.
 
-Stopping rbp cuts whatever is playing. These decide when not to. They are run
-here against a mount table and a process tree written by the test, which is
-what PROC_ROOT in the orchestrator exists for.
+They are run here against a process tree written by the test, which is what
+PROC_ROOT in the orchestrator exists for.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ def function(name: str) -> str:
     return match.group(0)
 
 
-PREAMBLE = "say() { :; }\n" + function("media_topology_is_unsafe") + function("rbp_alive")
+PREAMBLE = "say() { :; }\n" + function("rbp_alive")
 
 
 def run_shell(body: str, proc_root: Path) -> subprocess.CompletedProcess[str]:
@@ -41,55 +40,6 @@ def run_shell(body: str, proc_root: Path) -> subprocess.CompletedProcess[str]:
         input=f'PROC_ROOT="{proc_root}"\n' + PREAMBLE + body,
         text=True, capture_output=True, check=False,
     )
-
-
-class MediaTopologyTests(unittest.TestCase):
-    def guard(self, mounts: str, ours: str = "/media/usb1/RX3") -> int:
-        with tempfile.TemporaryDirectory() as directory:
-            table = Path(directory) / "mounts"
-            table.write_text(mounts)
-            result = run_shell(
-                f'media_topology_is_unsafe "{ours}" "{table}"\n'
-                'echo "verdict=$?"\necho "reason=$MEDIA_GUARD_REASON"\n',
-                Path(directory),
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.verdict_reason = result.stdout
-            return int(re.search(r"verdict=(\d+)", result.stdout).group(1))
-
-    def test_our_drive_alone_is_safe(self):
-        self.assertEqual(self.guard(
-            "/dev/root / squashfs ro 0 0\n"
-            "/dev/sda1 /media/usb1/RX3 vfat rw 0 0\n"), 1)
-
-    def test_a_second_drive_defers(self):
-        """The B2B case. Their stick is mounted and playing; ours must not stop rbp."""
-        self.assertEqual(self.guard(
-            "/dev/sda1 /media/usb1/RX3 vfat rw 0 0\n"
-            "/dev/sdb1 /media/usb2/THEIRS vfat rw 0 0\n"), 0)
-        self.assertIn("/media/usb2/THEIRS", self.verdict_reason)
-        self.assertIn("/dev/sdb1", self.verdict_reason)
-
-    def test_an_unreadable_table_defers(self):
-        """Not knowing is treated as unsafe, not as an empty table."""
-        with tempfile.TemporaryDirectory() as directory:
-            result = run_shell(
-                'media_topology_is_unsafe "/media/usb1/RX3" "/nonexistent/mounts"\n'
-                'echo "verdict=$?"\necho "reason=$MEDIA_GUARD_REASON"\n',
-                Path(directory),
-            )
-            self.assertIn("verdict=0", result.stdout)
-            self.assertIn("mount table unavailable", result.stdout)
-
-    def test_our_drive_missing_defers(self):
-        """A mount that moved is a mount we cannot reason about."""
-        self.assertEqual(self.guard("/dev/root / squashfs ro 0 0\n"), 0)
-        self.assertIn("expected 1", self.verdict_reason)
-
-    def test_a_trailing_slash_is_the_same_drive(self):
-        self.assertEqual(self.guard(
-            "/dev/sda1 /media/usb1/RX3 vfat rw 0 0\n",
-            ours="/media/usb1/RX3/"), 1)
 
 
 class ZombieTests(unittest.TestCase):
@@ -124,6 +74,30 @@ class ZombieTests(unittest.TestCase):
                 f'[ -d "$PROC_ROOT/103" ]\necho "verdict=$?"\n', Path(directory))
             self.assertIn("verdict=0", weakened.stdout)
             self.assertEqual(self.alive("103", exe=False, state="Z"), 1)
+
+class MediaDeferralTests(unittest.TestCase):
+    """The mods run whatever else is mounted.
+
+    A deferral here is not a safeguard, it is a lockout: the player mounts
+    every readable partition, so a stick with an EFI partition beside its data
+    partition presented two mounts and the mod deferred on every insertion
+    forever. A second stick had the same effect. Neither can interrupt the
+    player in a way the mods have to respect, and the drive the mods run from
+    is the one the launcher passed, not a mount the guard picked.
+    """
+
+    def test_nothing_defers_on_what_else_is_mounted(self):
+        source = AUTOEXEC.read_text()
+        for gone in ("defer_for_unsafe_media", "media_topology_is_unsafe",
+                     "mount_base_device", "mod deferred", "safe-load"):
+            self.assertNotIn(gone, source)
+
+    def test_the_run_still_checks_it_is_our_player(self):
+        source = AUTOEXEC.read_text()
+        for kept in ("rbp_executable_matches",
+                     "expected one live rbp",
+                     "effective root is not RAM-backed"):
+            self.assertIn(kept, source)
 
 
 if __name__ == "__main__":

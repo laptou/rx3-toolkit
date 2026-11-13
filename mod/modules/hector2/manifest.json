@@ -1,0 +1,33 @@
+{
+  "id": "hector2",
+  "name": {
+    "en": "Hector",
+    "fr": "Hector"
+  },
+  "description": {
+    "en": "TRANS becomes HECTOR. LEVEL/DEPTH sets the sprite size and the channel places it over track 1, track 2, or the middle. The audio stays dry. Needs RX3_SPRITES/hector.rx3spr. Not for use with the sprites module or with Charizard.",
+    "fr": "TRANS devient HECTOR. LEVEL/DEPTH règle la taille du sprite et le canal le place sur la piste 1, la piste 2 ou au milieu. L'audio reste sec. Nécessite RX3_SPRITES/hector.rx3spr. À ne pas utiliser avec le module sprites ni avec Charizard."
+  },
+  "firmwares": [
+    "1.19"
+  ],
+  "default": false,
+  "order": 66,
+  "category": "screen",
+  "runtime_directory": "hector2",
+  "namespace": "hector2",
+  "requires": [
+    "spritefx"
+  ],
+  "conflicts": [
+    "sprites",
+    "charizard2"
+  ],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ]
+}

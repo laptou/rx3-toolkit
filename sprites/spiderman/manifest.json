@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "name": "spiderman",
+  "layout": "sequence",
+  "width": 177,
+  "height": 200,
+  "frame_count": 16,
+  "mode": "beat",
+  "fps_num": 8,
+  "fps_den": 1,
+  "frames_per_beat": 16,
+  "beats_per_loop": 1,
+  "anchor": "center"
+}

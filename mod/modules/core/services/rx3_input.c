@@ -11,6 +11,7 @@
 #define SEND_KEY       ((unsigned long)0x0037ad64)
 #define CHECK_SLIP_LED ((unsigned long)0x002fcc04)
 #define CHECK_LED_STAT ((unsigned long)0x002f6318)
+#define CHECK_BEAT_JUMP_LED ((unsigned long)0x002fe544)
 #define PHYSICAL_KEY   ((unsigned long)0x00306b78)
 #define SET_LED_COLOR  ((unsigned long)0x0033e4f8)
 #define SET_LED_STATE  ((unsigned long)0x0033e3f4)
@@ -19,6 +20,8 @@ static const uint8_t pad_guard[8] = {0xb8,0x30,0xd1,0xe1,0xf0,0x4f,0x2d,0xe9};
 static const uint8_t send_key_guard[8] = {0xf0,0x4f,0x2d,0xe9,0x0c,0xd0,0x4d,0xe2};
 /* This prologue contains a PC-relative ldr and requires literal relocation. */
 static const uint8_t slip_led_guard[8] = {0xb4,0x3d,0x9f,0xe5,0xf0,0x4f,0x2d,0xe9};
+/* So does BEAT JUMP's: ldr r3,[pc,#imm]; push. */
+static const uint8_t beat_jump_led_guard[8] = {0x14,0x37,0x9f,0xe5,0xf0,0x4f,0x2d,0xe9};
 static const uint8_t led_stat_guard[8] = {0xf0,0x4f,0x2d,0xe9,0x00,0x40,0xa0,0xe1};
 static const uint8_t physical_guard[8] = {0xb8,0x30,0xd1,0xe1,0x00,0xc0,0xa0,0xe3};
 
@@ -54,10 +57,10 @@ struct shared_hook {
 static struct pad_client pad_clients[CLIENT_LIMIT];
 static struct key_client key_clients[CLIENT_LIMIT];
 static unsigned int pad_client_count, key_client_count;
-static const void *slip_led_owner, *pad_led_owner, *mode_key_owners[CLIENT_LIMIT];
-static rx3_light_fn slip_light, pad_light;
+static const void *slip_led_owner, *pad_led_owner, *beat_jump_led_owner, *mode_key_owners[CLIENT_LIMIT];
+static rx3_light_fn slip_light, pad_light, beat_jump_light;
 static volatile unsigned int blink_origin, blink_valid;
-static struct shared_hook pad_hook, key_hook, slip_led_hook, pad_led_hook, mode_key_hook;
+static struct shared_hook pad_hook, key_hook, slip_led_hook, pad_led_hook, beat_jump_led_hook, mode_key_hook;
 static void (*mode_key_action)(void);
 static uint8_t shift_held[KEY_CHANNELS];
 static unsigned int key_trace_limit, key_traced;
@@ -116,6 +119,7 @@ static int pad_hooked(void *player, const void *input)
     unsigned int number = e.channel >= 1u && e.channel <= 2u ? e.channel : innards[0x26u];
     e.deck = number >= 1u && number <= 2u ? number - 1u : RX3_NO_DECK;
     e.pad_mode = *(const uint32_t *)(innards + 0x74u);
+    e.page = innards[0x7cu];
     int result = 0;
     for (unsigned int i = 0; i < pad_client_count && !result; i++) {
         rx3_pad_handler handler = __atomic_load_n(&pad_clients[i].handler, __ATOMIC_SEQ_CST);
@@ -190,6 +194,10 @@ static void apply_light(uint8_t *led, const struct rx3_light *light, int set_sta
 {
     const uint8_t colour[3] = {(uint8_t)(light->rgb >> 16u), (uint8_t)(light->rgb >> 8u),
                                (uint8_t)light->rgb};
+    if (light->state == RX3_LIGHT_OFF) {
+        led_state_writer(led, 0, 0u, 0u, 0, 0);
+        return;
+    }
     if (light->state == RX3_LIGHT_BLINK) {
         led_state_writer(led, LED_BLINK, BLINK_PERIOD_MS, blink_origin_ms(), 0, 0);
         led_colour_writer(led, LED_BLINK, 0, colour);
@@ -227,6 +235,34 @@ static void slip_led_hooked(void *player, void *led_stat)
         }
     }
     leave(&slip_led_hook);
+}
+
+/* BEAT JUMP, second page only: the player's own flag at +0x220 says the page
+   is shown, and its channel byte names the deck. The pads are IDs 18 to 25. */
+static void beat_jump_led_hooked(void *player, void *led_stat)
+{
+    enter(&beat_jump_led_hook);
+    ((led_refresh_fn)beat_jump_led_hook.original)(player, led_stat);
+    rx3_light_fn light_of = __atomic_load_n(&beat_jump_light, __ATOMIC_SEQ_CST);
+    uint8_t *entries;
+    unsigned int count;
+    unsigned int deck_channel = player ? *(const uint8_t *)((const uint8_t *)player + 0x26u) : 0u;
+    if (light_of && player && (((const uint8_t *)player)[0x220u] & 0x40u) &&
+        led_list(led_stat, &entries, &count)) {
+        for (unsigned int i = 0; i < count; i++) {
+            uint8_t *led = entries + i * LED_STRIDE;
+            unsigned int id = *(const uint32_t *)led;
+            unsigned int channel = *(const uint32_t *)(led + 4u);
+            if (id < 18u || id > 25u) continue;
+            if (deck_channel && channel != deck_channel) continue;
+            unsigned int number = deck_channel ? deck_channel : channel;
+            if (number < 1u || number > 2u) continue;
+            struct rx3_light light = {RX3_LIGHT_NATIVE, 0u};
+            light_of(number - 1u, id - 18u, &light);
+            if (light.state != RX3_LIGHT_NATIVE) apply_light(led, &light, 0);
+        }
+    }
+    leave(&beat_jump_led_hook);
 }
 
 /* Every pad mode: the pads are IDs 18 to 25 when the list carries them there,
@@ -311,13 +347,22 @@ static int register_key(const void *owner, unsigned int priority, rx3_key_handle
 
 static int register_lights(const void *owner, unsigned int refresh, rx3_light_fn light)
 {
-    if (!owner || !light || refresh > RX3_LIGHTS_PADS) return 0;
+    if (!owner || !light || refresh > RX3_LIGHTS_BEAT_JUMP) return 0;
     if (refresh == RX3_LIGHTS_SLIP_LOOP) {
         if (slip_led_owner ||
             !acquire(&slip_led_hook, CHECK_SLIP_LED, slip_led_guard, (void *)slip_led_hooked, 1))
             return 0;
         slip_led_owner = owner;
         __atomic_store_n(&slip_light, light, __ATOMIC_SEQ_CST);
+        return 1;
+    }
+    if (refresh == RX3_LIGHTS_BEAT_JUMP) {
+        if (beat_jump_led_owner ||
+            !acquire(&beat_jump_led_hook, CHECK_BEAT_JUMP_LED, beat_jump_led_guard,
+                     (void *)beat_jump_led_hooked, 1))
+            return 0;
+        beat_jump_led_owner = owner;
+        __atomic_store_n(&beat_jump_light, light, __ATOMIC_SEQ_CST);
         return 1;
     }
     if (pad_led_owner ||
@@ -363,6 +408,10 @@ static void unregister_owner(const void *owner)
         __atomic_store_n(&pad_light, 0, __ATOMIC_SEQ_CST);
         pad_led_owner = 0;
     }
+    if (beat_jump_led_owner == owner) {
+        __atomic_store_n(&beat_jump_light, 0, __ATOMIC_SEQ_CST);
+        beat_jump_led_owner = 0;
+    }
     for (unsigned int i = 0; i < CLIENT_LIMIT; i++) {
         if (mode_key_owners[i] == owner) mode_key_owners[i] = 0;
         if (mode_key_owners[i]) modes++;
@@ -370,11 +419,12 @@ static void unregister_owner(const void *owner)
     /* Handlers the owner left behind can still be running; wait them out
        before its code or state may be released. */
     drain(&pad_hook); drain(&key_hook); drain(&slip_led_hook);
-    drain(&pad_led_hook); drain(&mode_key_hook);
+    drain(&pad_led_hook); drain(&beat_jump_led_hook); drain(&mode_key_hook);
     if (!pads) { relinquish(&pad_hook); if (!pad_hook.original) pad_client_count = 0; }
     if (!keys) { relinquish(&key_hook); if (!key_hook.original) key_client_count = 0; }
     if (!slip_led_owner) relinquish(&slip_led_hook);
     if (!pad_led_owner) relinquish(&pad_led_hook);
+    if (!beat_jump_led_owner) relinquish(&beat_jump_led_hook);
     if (!modes) relinquish(&mode_key_hook);
 }
 
@@ -397,7 +447,8 @@ void rx3_input_trace_keys(unsigned int limit)
 
 unsigned int rx3_input_count(void)
 {
-    return pad_client_count + key_client_count + (slip_led_owner != 0) + (pad_led_owner != 0);
+    return pad_client_count + key_client_count + (slip_led_owner != 0) +
+           (pad_led_owner != 0) + (beat_jump_led_owner != 0);
 }
 
 const struct rx3_input_service rx3_input = {

@@ -22,7 +22,9 @@ class FrameworkTests(unittest.TestCase):
         if 'core/runtime/rx3_modules.c' in units:
             # The service table names every shared service.
             for unit in ('core/services/rx3_input.c', 'core/services/rx3_audio.c',
-                         'core/services/rx3_memory.c', 'core/services/rx3_loader.c'):
+                         'core/services/rx3_memory.c', 'core/services/rx3_loader.c',
+                         'core/services/rx3_overlays.c',
+                         'core/services/rx3_beatfx.c'):
                 if unit not in units:
                     units = [*units, unit]
         compiler = shutil.which('clang') or shutil.which('cc')
@@ -59,6 +61,7 @@ extern int unsetenv(const char *);
 struct installed_hook;
 __attribute__((weak)) void *install_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { (void)h; (void)a; (void)g; (void)r; return 0; }
 __attribute__((weak)) void *install_pc_ldr_hook(struct installed_hook *h, unsigned long a, const uint8_t g[8], void *r) { (void)h; (void)a; (void)g; (void)r; return 0; }
+__attribute__((weak)) void *install_return_hook(struct installed_hook *h, unsigned long a, uint32_t b, uint32_t t, void *r) { (void)h; (void)a; (void)b; (void)t; (void)r; return 0; }
 __attribute__((weak)) int uninstall_hook(struct installed_hook *h) { (void)h; return 1; }
 __attribute__((weak)) int detach_hook(struct installed_hook *h) { (void)h; return 1; }
 __attribute__((weak)) int release_hook(struct installed_hook *h) { (void)h; return 1; }

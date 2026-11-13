@@ -20,6 +20,8 @@ class AuditRegressions(unittest.TestCase):
     def test_patch_failure_restores_bytes_before_trampoline_release(self):
         patch = (MODULES / 'core/firmware/rx3_patch.c').read_text()
         writer = 'int write_code(' + patch.split('int write_code(', 1)[1]
+        # the pc-ldr installer preserves whichever register the prologue loads
+        # (r3 in this audit's fixture); one more instruction replayed after it.
         self.run_units(r'''
 #include "core/services/rx3_hooks.h"
 #include "core/firmware/rx3_patch.h"

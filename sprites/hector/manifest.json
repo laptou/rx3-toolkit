@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "name": "hector",
+  "layout": "sequence",
+  "width": 256,
+  "height": 256,
+  "frame_count": 48,
+  "mode": "fps",
+  "fps_num": 8,
+  "fps_den": 1,
+  "frames_per_beat": 0,
+  "beats_per_loop": 0,
+  "anchor": "center"
+}

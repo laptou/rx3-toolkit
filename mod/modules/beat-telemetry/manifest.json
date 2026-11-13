@@ -1,0 +1,51 @@
+{
+  "id": "beat-telemetry",
+  "name": {
+    "en": "Beat telemetry",
+    "fr": "Télémétrie rythmique"
+  },
+  "description": {
+    "en": "Sends each deck's beat-grid phase, beat-in-bar, live tempo, playing state and on-air state to compatible visual software over the rear USB-B link.",
+    "fr": "Transmet la phase de grille, le temps dans la mesure, le tempo, l'état de lecture et l'état on-air de chaque deck à un logiciel visuel compatible via USB-B."
+  },
+  "firmwares": [
+    "1.19",
+    "1.20"
+  ],
+  "default": false,
+  "order": 102,
+  "category": "streaming",
+  "runtime_directory": "beat-telemetry",
+  "namespace": "beat_telemetry",
+  "requires": [
+    "core"
+  ],
+  "conflicts": [],
+  "files": [
+    {
+      "source": "module.sh",
+      "target": "module.sh",
+      "executable": false
+    }
+  ],
+  "build_files": [
+    "rx3_beat_telemetry_packet.h",
+    "rx3_beat_telemetry_decl.h",
+    "rx3_beat_telemetry_feature.h",
+    "rx3_beat_telemetry_module.c"
+  ],
+  "messages": {
+    "en": {
+      "beatTelemetry.usage": "Technical setup for beat-synced visuals",
+      "beatTelemetry.connect": "Activate this optional module, build the mod and load it on the RX3. Connect the rear USB-B port to your computer.",
+      "beatTelemetry.receive": "The module sends binary BCB1 version 1 datagrams to UDP port 50124 at approximately 20 Hz.",
+      "beatTelemetry.limits": "Beat-grid access and packet timing are experimental until verified on the RX3 hardware and firmware version you use."
+    },
+    "fr": {
+      "beatTelemetry.usage": "Configuration technique pour les visuels synchronisés au tempo",
+      "beatTelemetry.connect": "Activez ce module facultatif, créez le mod et chargez-le sur le RX3. Reliez le port USB-B arrière à votre ordinateur.",
+      "beatTelemetry.receive": "Le module envoie des datagrammes binaires BCB1 version 1 sur le port UDP 50124, environ 20 fois par seconde.",
+      "beatTelemetry.limits": "L'accès à la grille rythmique et le timing des paquets restent expérimentaux jusqu'à leur validation sur le matériel et le firmware RX3 utilisés."
+    }
+  }
+}

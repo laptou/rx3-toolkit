@@ -113,6 +113,7 @@ static int marker_open(const char *p,int f,int m){(void)p;(void)f;(void)m;ready=
 #define open marker_open
 static void close(int fd){(void)fd;}
 static void rx3_log_configure(void){}
+static void log_build_stamp(void){}
 static void log_line(const char *s){(void)s;}
 static void log_number(const char *s,unsigned long n){(void)s;(void)n;}
 static int rx3_message_allowed(void){return 1;}

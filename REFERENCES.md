@@ -2825,7 +2825,12 @@ their hooks and drain admitted native callbacks before releasing trampolines.
 | Logo | Artwork, its size and its native placement | Native image replacement |
 | Now Playing | Worker, sockets, player observations | Hooks, logging |
 | Samples | Bank, settings, voices, pad policy, pad colours, panel | Input (pads, SHIFT, pad lights, mode keys), master audio stage, panels, memory, loader |
+| Sidechain | Compression maths, ratio state, key filters, the meter, the ratio's beat label | Beat fx (operate, BEAT arrows, info block), audio channel stage, overlays (meter window, draw watcher, wave query) |
+| Band-pass | SVF maths, per-channel filter state, the COLOR/PARAM mapping | Its one native hook, through the core's installer |
+| Sprites, Sprite FX | Packs, the choice, the drawn frame; the two pack-selecting shell modules | Overlays (window, draw watcher, wave query), beat fx operate slot, audio deck stream and grid walk, input (beat jump pads and lights), hooks |
+| Swang | Swing warp maths, note and phase state, the waveform tick scan | Beat fx (operate, BEAT arrows, TIME knob, info block), audio deck stream and grid walk, pc-ldr installer |
 | Search Latin | Transliteration | Hooks, logging |
+| Sprites | Packs, the choice, the overlay's contents, the pulse envelope, the relabelled UTILITY row | Overlays (window, draw watcher, wave queries), audio deck stream and master stage, input (beat jump page 2 pads, beat jump lights), hooks |
 | Stems | Files and formats, payloads, per-deck mix, pad and light policy, panel | Input (pads, SLIP LOOP lights, blink clock), deck stream stage, providers, panels, memory, loader, track notifications |
 | Stemwave | Waveform rendering | Hooks, mix observations, waveform copies, track notifications |
 | Theme | Chrome and conversion policy, SHIFT + SHORTCUT, Utility row, waveform palette, pixel arena, watcher | Image variants and fill adapter, key handler, guarded writes, memory |
@@ -3128,6 +3133,110 @@ stage ordering, the ledger rule, loader ordering and release, and each
 module's start, failure and stop paths against mock services. None of this
 has run on an RX3: pad and LED behaviour, audio timing and live hook
 replacement still need the hardware acceptance sequence.
+
+<a id="doc-runtime-framework--overlay-windows-api-version-19"></a>
+##### Overlay windows (API version 19)
+
+`services->overlays` is the one way a module puts its own pixels above the
+player's layers. rbp draws the scrolling waveforms into a private `ds_gr`
+window that its compositor keeps above every `ns` window, so neither the image
+tables nor a pad row can reach those 892x444 pixels; a sprite over a deck's
+waveform or a meter between them needs a window of its own with a lower z,
+which is what the player's own play mode does.
+
+The core owns the four free z slots under the waveform (`0x3e` to `0x3b`), the
+magenta colour key, window creation and destruction. A module owns the
+contents and the lifetime of the windows it claims: `claim` with a rectangle
+and a stacking side, `lock` for pixels and pitch, then `present` or `discard`,
+all on the render thread. `deck_rect` returns one deck's strip so no module
+types firmware geometry. `release` destroys the caller's windows and drops its
+watcher after the module's callbacks have drained.
+
+A window paints nothing until the module knows the player has drawn, so
+`watch_draw` registers one render-thread watcher per owner and the core calls
+it with each drawn image id after the image service sees it; the scrolling
+waveform is `0x159a`. The core dispatches that from the existing draw hook, so
+an overlay costs no extra native hook. Claims from opposite ends keep one
+module's stacking independent of the order modules start in.
+
+`wave_up` says whether the waveform screen's window exists and
+`wave_deck_loaded` whether a deck's waveform holds data, both read from the
+player's own words, so an overlay closes with the screen instead of floating
+over the browse page. A caller's window handle is checked against the core's
+table on every use, so a struct left stale by `release` cannot reach the
+player.
+
+API 19 also amends the input service: the pad event carries the mode's `page`
+byte, which is how BEAT JUMP page 2 is told apart from page 1;
+`RX3_LIGHTS_BEAT_JUMP` is a third claimable light refresh, dispatched only
+while that page is shown, with the deck the refreshing player names; and
+`RX3_LIGHT_OFF` answers an LED dark. Sprites is the first consumer of all
+three.
+
+The sprites module is the first client of the overlay service: one pack per
+deck loaded from `RX3_SPRITES`, one window over the whole view, beat phase
+walked from the deck's own reader through the audio deck stream, and the
+pulse envelope from the master bus. Its pad faces keep the stock glyphs in
+this port — relabelling them needs the stock glyph records' measured sizes,
+which only a player or an imagedata dump can give — so the lit pad is the
+selection marker on BEAT JUMP page 2 until then.
+
+This is host-built only. Window creation, compositing order, the colour key
+and the redraw cadence still need the hardware acceptance sequence, and a
+claim is refused rather than retried when the player will not create the
+window.
+
+<a id="doc-runtime-framework--beat-fx-ownership-and-channel-stage-api-version-20"></a>
+##### Beat fx ownership and the channel stage (API version 20)
+
+A module that replaces a stock beat fx needs four native places, and a
+function can carry only one hook, so `services->beatfx` owns them:
+`operateBeatEffect` (the selected effect's block, in place, on the audio
+thread — return nonzero to skip stock), the BEAT arrows and the TIME knob
+(`MasterInnards` events on the ui thread — return nonzero to consume), and
+`SetBeatFxInfo` (the play screen's beat fx block, broadcast after stock
+filled it). Each hook installs with its first client and is removed with
+its last; registration is once per owner per stage for the process
+lifetime, and priority orders each chain like the pad chain.
+
+The ownership rule lives in the api header as inline helpers, because every
+consumer filters by it on every block: a module owns the block from ON
+through OFF — the faded-to type is its own, the next is its own or off, the
+channel is settled, and the fade is not a tail. The tail is handed back to
+stock so a switch to or from the module's effect still crossfades in
+stock. `manager()` returns the manager the last operate call ran on, for
+ui-thread queries. While any info client is registered, the core also logs
+every change of the manager's selection and fade state, so a module that
+misreads it shows up in the core log.
+
+API 20 also adds the audio service's channel stage: `claim_channel` hands a
+deck's post-fader block — after the fader and the channel's own processing,
+just before the master sums it — to one owner, channel 1 before channel 2.
+That is where a per-deck gain belongs; the deck stream stays pre-fader and
+the master is already summed. The deck stream itself becomes a small client
+chain, because it is observation as often as processing — sprites and swang
+both read the position while stems replaces the audio — so every client is
+called after the original, and registration is once per owner for the
+process lifetime like the other chains. `beat_at` walks the playhead's place
+on the deck's own beat grid from the reader the service already resolved the
+deck by, so no module carries a copy of that walk; sprites and swang both
+call it. `install_pc_ldr_hook` joins the service table for a module whose own
+guarded hook sits on a PC-relative load, which the plain installer cannot
+preserve; the hook layer now recognises whichever register the prologue
+loads, not just r3.
+
+Sidechain is the first consumer: HELIX (engine type 14, ui type 4) becomes a
+compressor keyed by the beat fx channel's 150 Hz low-passed level, the
+channel stage ducks the other deck, the operate claim keeps HELIX dry from
+ON through OFF, the BEAT arrows step the ratio, the info claim writes the
+ratio's stock label into the beat number, and the meter scrolls through an
+overlay window below the sprite. Its caption images and beat-number
+lettering keep their stock artwork in this port — relabelling them needs
+the stock records' measured sizes.
+
+This is host-built only. The operate skip, the control takeover, the block
+rewrite and the channel stage's deck mapping still need the hardware
+acceptance sequence.
 
 ---
 

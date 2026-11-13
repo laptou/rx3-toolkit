@@ -236,7 +236,7 @@ static const struct rx3_services *framework=&services;
 /* The core's pad chain: the bank first, then the player exactly once. */
 static int hooked_on_key_pad(void *self, const void *raw) {
     const uint8_t *event=raw;assert(self==(void *)1);
-    struct rx3_pad_event e={event[8]|(unsigned)event[9]<<8,event[11]&15u,event[10],0,2};
+    struct rx3_pad_event e={event[8]|(unsigned)event[9]<<8,event[11]&15u,event[10],0,2,0};
     if(samples_pad(&e)) return 1;
     stock_calls++; return 42;
 }
@@ -834,6 +834,7 @@ static void rx3_log_number(const char *s,unsigned long n){(void)s;(void)n;}
 struct installed_hook;
 static void *install_hook(struct installed_hook *h,unsigned long a,const uint8_t g[8],void *r){(void)h;(void)a;(void)g;(void)r;return 0;}
 static void *install_pc_ldr_hook(struct installed_hook *h,unsigned long a,const uint8_t g[8],void *r){(void)h;(void)a;(void)g;(void)r;return 0;}
+static void *install_return_hook(struct installed_hook *h,unsigned long a,uint32_t b,uint32_t t,void *r){(void)h;(void)a;(void)b;(void)t;(void)r;return 0;}
 static int detach_hook(struct installed_hook *h){(void)h;return 1;}
 static int release_hook(struct installed_hook *h){(void)h;return 1;}
 static int native(void *p,const void *i) {
