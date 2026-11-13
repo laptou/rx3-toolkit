@@ -116,6 +116,7 @@
       "core/runtime/rx3_modules.c",
       "search-latin/rx3_search_module.c",
       "now-playing/rx3_now_playing_module.c",
+      "beat-telemetry/rx3_beat_telemetry_module.c",
       "core/firmware/rx3_patch.c",
       "core/services/rx3_mix_state.c",
       "core/runtime/rx3_composition.c",
